@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod commands;
 pub mod crud;
+pub mod egressos_domain;
 pub mod export;
 pub mod import;
 pub mod json_io;
@@ -16,8 +17,55 @@ pub mod sync_github;
 
 use tauri::Manager;
 
+/// Em terminais abertos a partir de um pacote Snap (ex.: VS Code Snap no Ubuntu),
+/// variáveis como `XDG_DATA_DIRS` e `GSETTINGS_SCHEMA_DIR` apontam para
+/// `/snap/.../usr/share/glib-2.0/schemas`, cujo schema `org.gnome.settings-daemon.plugins.xsettings`
+/// é incompatível com o GTK3/WebKit2GTK do sistema (`does not contain a key named 'antialiasing'`).
+/// Limpamos os caminhos `/snap/` antes de inicializar o runtime gráfico do Tauri.
+pub fn sanitize_snap_gtk_env() {
+    for var in [
+        "GSETTINGS_SCHEMA_DIR",
+        "GTK_PATH",
+        "GIO_MODULE_DIR",
+        "GDK_PIXBUF_MODULE_FILE",
+        "GDK_PIXBUF_MODULEDIR",
+        "GTK_EXE_PREFIX",
+        "GTK_DATA_PREFIX",
+    ] {
+        if let Ok(val) = std::env::var(var) {
+            if val.contains("/snap/") {
+                std::env::remove_var(var);
+            }
+        }
+    }
+
+    if let Ok(xdg) = std::env::var("XDG_DATA_DIRS") {
+        let cleaned: Vec<&str> = xdg
+            .split(':')
+            .filter(|p| !p.is_empty() && !p.starts_with("/snap/"))
+            .collect();
+        if cleaned.is_empty() {
+            std::env::set_var(
+                "XDG_DATA_DIRS",
+                "/usr/local/share:/usr/share:/var/lib/snapd/desktop",
+            );
+        } else {
+            std::env::set_var("XDG_DATA_DIRS", cleaned.join(":"));
+        }
+    }
+
+    let host_schemas = std::path::Path::new("/usr/share/glib-2.0/schemas");
+    if host_schemas.join("gschemas.compiled").is_file()
+        && std::env::var("GSETTINGS_SCHEMA_DIR").is_err()
+    {
+        std::env::set_var("GSETTINGS_SCHEMA_DIR", host_schemas);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    sanitize_snap_gtk_env();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
@@ -63,6 +111,16 @@ pub fn run() {
             commands::src_delete_participacao,
             commands::src_get_meta,
             commands::src_update_meta,
+            commands::import_egressos_dir,
+            commands::export_egressos_dir,
+            commands::egressos_get_catalog,
+            commands::egressos_list_rows,
+            commands::egressos_get_row,
+            commands::egressos_create_row,
+            commands::egressos_update_row,
+            commands::egressos_delete_row,
+            commands::egressos_get_envelope,
+            commands::egressos_update_envelope,
             commands::merge_entities,
             commands::link_entities,
             commands::github_get_config,
@@ -89,6 +147,8 @@ pub(crate) const ROUTES: &[&str] = &[
     "/dashboard",
     "/src",
     "/src/acoes",
+    "/egressos",
+    "/egressos/tabelas",
     "/dashboard/researchers",
     "/dashboard/articles",
     "/dashboard/groups",
@@ -159,8 +219,8 @@ mod tests {
     fn contagem_de_rotas_bate_com_o_menu_lateral() {
         assert_eq!(
             ROUTES.len(),
-            21,
-            "ROUTES deve cobrir raiz + login + projects + dashboard + 15 entidades + /src + /src/acoes"
+            23,
+            "ROUTES deve cobrir raiz + login + projects + dashboard + 15 entidades + /src + /src/acoes + /egressos + /egressos/tabelas"
         );
     }
 
@@ -173,6 +233,27 @@ mod tests {
             resolver.get("/register".into()).is_some(),
             "rota /register nao resolveu"
         );
+    }
+
+    #[test]
+    fn sanitize_snap_gtk_env_removes_snap_paths_from_xdg_and_gsettings() {
+        std::env::set_var(
+            "XDG_DATA_DIRS",
+            "/snap/code/200/usr/share:/usr/share/ubuntu:/usr/share",
+        );
+        std::env::set_var(
+            "GSETTINGS_SCHEMA_DIR",
+            "/snap/code/200/usr/share/glib-2.0/schemas",
+        );
+        super::sanitize_snap_gtk_env();
+
+        let xdg = std::env::var("XDG_DATA_DIRS").unwrap();
+        assert!(!xdg.contains("/snap/"));
+        assert!(xdg.contains("/usr/share"));
+
+        if let Ok(gs) = std::env::var("GSETTINGS_SCHEMA_DIR") {
+            assert!(!gs.contains("/snap/"));
+        }
     }
 }
 

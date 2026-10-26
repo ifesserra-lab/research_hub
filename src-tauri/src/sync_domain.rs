@@ -29,9 +29,8 @@ pub struct SyncProgress {
 pub const SYNC_CONFIG_FILE: &str = "sync_config.json";
 
 /// Projetos conhecidos. O envio do SRC é bloqueado por política (FR-005),
-/// mas a estrutura existe para os dois — a decisão é reversível sem
-/// redesenho (Q1 da discussão do curador).
-pub const PROJECTS: [&str; 2] = ["horizon", "src"];
+/// enquanto Horizon e Egressos (SEP-035) permitem download e envio.
+pub const PROJECTS: [&str; 3] = ["horizon", "src", "egressos"];
 
 /// Destino/envio de UM projeto (FR-004: configurações separadas — os
 /// repositórios dos dois projetos são gits separados).
@@ -170,11 +169,10 @@ pub fn ensure_known_project(project: &str) -> Result<(), AppError> {
 
 /// Política de dados pessoais para o envio (FR-005, decisão Option B): o
 /// consolidado do SRC contém PII direta e NÃO sobe nesta entrega — erro SEM
-/// qualquer chamada de rede. Bloqueio é política por projeto, reversível no
-/// futuro sem redesenho (regra 1 do data-model.md).
+/// qualquer chamada de rede. Horizon e Egressos (SEP-035, FR-012) são permitidos.
 pub fn check_upload_allowed(project: &str) -> Result<(), AppError> {
     match project {
-        "horizon" => Ok(()),
+        "horizon" | "egressos" => Ok(()),
         "src" => Err(AppError::SyncPolicy(
             "O consolidado do SRC contém dados pessoais (CPF, e-mail) e não \
              pode ser enviado ao GitHub nesta versão. O export local continua \
@@ -292,6 +290,75 @@ pub fn normalize_url(url: &str) -> Result<NormalizedSource, AppError> {
     }
 }
 
+/// Origem de download de diretório do Egressos no GitHub (`SEP-035`, `FR-011`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EgressosDirSource {
+    pub owner: String,
+    pub repo: String,
+    pub reference: String,
+    pub dir: String,
+}
+
+/// Normaliza uma URL de pasta ou repositório do GitHub para o projeto Egressos (`FR-011`):
+/// - `https://github.com/{owner}/{repo}/tree/{ref}/{dir...}` → `(owner, repo, ref, dir)`
+/// - `https://github.com/{owner}/{repo}/tree/{ref}` → `(owner, repo, ref, "dados")`
+/// - `https://github.com/{owner}/{repo}` → `(owner, repo, "main", "dados")`
+pub fn normalize_egressos_source(url: &str) -> Result<EgressosDirSource, AppError> {
+    let parsed = url::Url::parse(url.trim())
+        .map_err(|_| AppError::Validation(format!("URL inválida: {url}")))?;
+
+    if parsed.scheme() != "https" || parsed.host_str() != Some("github.com") {
+        return Err(AppError::Validation(
+            "Use uma URL https://github.com/{owner}/{repo}/tree/{branch}/{pasta} para baixar a pasta dados/ do Egressos.".into(),
+        ));
+    }
+
+    let segments: Vec<String> = parsed
+        .path_segments()
+        .map(|s| s.filter(|p| !p.is_empty()).map(|p| p.to_string()).collect())
+        .unwrap_or_default();
+
+    let (owner, repo, reference, dir) = match segments.as_slice() {
+        [owner, repo] => (
+            owner.clone(),
+            repo.trim_end_matches(".git").to_string(),
+            "main".to_string(),
+            "dados".to_string(),
+        ),
+        [owner, repo, kind, reference] if kind == "tree" => (
+            owner.clone(),
+            repo.trim_end_matches(".git").to_string(),
+            reference.clone(),
+            "dados".to_string(),
+        ),
+        [owner, repo, kind, reference, dir_parts @ ..] if kind == "tree" && !dir_parts.is_empty() => (
+            owner.clone(),
+            repo.trim_end_matches(".git").to_string(),
+            reference.clone(),
+            dir_parts.join("/"),
+        ),
+        _ => {
+            return Err(AppError::Validation(
+                "URL do Egressos esperada: https://github.com/{owner}/{repo}/tree/{branch}/{pasta} ou https://github.com/{owner}/{repo}".into(),
+            ));
+        }
+    };
+
+    validate_repo(&format!("{owner}/{repo}"))
+        .map_err(|e| AppError::Validation(e.to_string()))?;
+    validate_branch(&reference)
+        .map_err(|e| AppError::Validation(e.to_string()))?;
+    validate_path("egressos", &dir)
+        .map_err(|e| AppError::Validation(e.to_string()))?;
+
+    Ok(EgressosDirSource {
+        owner,
+        repo,
+        reference,
+        dir: dir.trim_matches('/').to_string(),
+    })
+}
+
 // ------------------------------------------------------------- persistência
 
 /// Visão da configuração que atravessa o IPC (T005). O valor completo do
@@ -384,17 +451,22 @@ pub fn git_blob_sha(bytes: &[u8]) -> String {
 }
 
 
+/// Retorna a configuração efetiva de um projeto (vazia se o curador ainda não
+/// salvou um destino em `sync_config.json`).
+pub fn effective_project_config(project: &str, file: &SyncConfigFile) -> ProjectSyncConfig {
+    file.project(project).cloned().unwrap_or_default()
+}
+
 /// Monta a visão de um projeto a partir do arquivo carregado. Projeto sem
-/// configuração salva → campos vazios (não é erro: é o primeiro uso).
+/// configuração salva → campos vazios (ou defaults canônicos para `egressos`).
 pub fn config_view(project: &str, file: &SyncConfigFile) -> Result<SyncConfigView, AppError> {
     ensure_known_project(project)?;
-    let empty = ProjectSyncConfig::default();
-    let cfg = file.project(project).unwrap_or(&empty);
+    let cfg = effective_project_config(project, file);
     Ok(SyncConfigView {
-        repo: cfg.repo.clone(),
-        branch: cfg.branch.clone(),
-        path: cfg.path.clone(),
-        last_source_url: cfg.last_source_url.clone(),
+        repo: cfg.repo,
+        branch: cfg.branch,
+        path: cfg.path,
+        last_source_url: cfg.last_source_url,
         has_token: file.token.is_some(),
         token_hint: token_hint(&file.token),
     })
@@ -726,6 +798,59 @@ mod tests {
         assert_eq!(
             git_blob_sha(b"hello world\n"),
             "3b18e512dba79e4c8300dd08aeb37f8e728b8dad"
+        );
+    }
+
+    // --------------------------------------------------------- SEP-035 (T029)
+
+    #[test]
+    fn egressos_esta_nos_projetos_com_upload_permitido_e_valida_pasta_dados() {
+        assert!(PROJECTS.contains(&"egressos"));
+        assert!(check_upload_allowed("egressos").is_ok());
+        assert!(validate_path("egressos", "dados").is_ok());
+        assert!(validate_path("egressos", "sub/dados").is_ok());
+        assert_eq!(
+            validate_path("egressos", "").unwrap_err().kind(),
+            "sync_config"
+        );
+        assert_eq!(
+            validate_path("egressos", "../dados").unwrap_err().kind(),
+            "sync_config"
+        );
+    }
+
+    #[test]
+    fn normalize_egressos_source_aceita_tree_e_repo_raiz() {
+        let s1 = normalize_egressos_source(
+            "https://github.com/thiagodeps/egressos/tree/main/dados",
+        )
+        .unwrap();
+        assert_eq!(
+            s1,
+            EgressosDirSource {
+                owner: "thiagodeps".into(),
+                repo: "egressos".into(),
+                reference: "main".into(),
+                dir: "dados".into(),
+            }
+        );
+
+        let s2 = normalize_egressos_source("https://github.com/thiagodeps/egressos").unwrap();
+        assert_eq!(
+            s2,
+            EgressosDirSource {
+                owner: "thiagodeps".into(),
+                repo: "egressos".into(),
+                reference: "main".into(),
+                dir: "dados".into(),
+            }
+        );
+
+        assert_eq!(
+            normalize_egressos_source("http://github.com/thiagodeps/egressos")
+                .unwrap_err()
+                .kind(),
+            "validation"
         );
     }
 }

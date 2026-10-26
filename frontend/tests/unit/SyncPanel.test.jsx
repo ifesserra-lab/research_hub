@@ -490,4 +490,106 @@ describe('SyncPanel (Token integration - US3)', () => {
   });
 });
 
+// SEP-035: Egressos GitHub sync (T031)
+describe('SyncPanel (Egressos - US4)', () => {
+  beforeEach(() => {
+    mockApiFetch.mockReset();
+    mockOnSyncProgress.mockClear();
+    progressCallback = null;
+  });
+
+  afterEach(() => cleanup());
+
+  it('starts with empty fields when no config is saved and downloads + uploads the 21 JSON files', async () => {
+    const importedListener = vi.fn();
+    window.addEventListener('egressos:imported', importedListener);
+    window.confirm = vi.fn(() => true);
+
+    mockApiFetch
+      // 1. GET /github/config?project=egressos (empty when not configured)
+      .mockResolvedValueOnce({
+        repo: '',
+        branch: '',
+        path: '',
+        last_source_url: null,
+        has_token: false,
+        token_hint: null,
+      })
+      // 2. POST /github/download
+      .mockResolvedValueOnce({
+        path: 'https://github.com/owner/egressos/tree/main/dados',
+        total_files: 21,
+        total_rows: 1142,
+        snapshot: 'egressos-pre-import-1761156000.db',
+      })
+      // 3. GET /github/check?project=egressos
+      .mockResolvedValueOnce({
+        repo: 'owner/egressos',
+        branch: 'main',
+        path: 'dados',
+        branch_exists: true,
+        file_exists: true,
+        file_sha: 'dir_sha_1',
+      })
+      // 4. POST /github/upload
+      .mockResolvedValueOnce({
+        commit_sha: 'egressos_commit_777',
+        html_url: 'https://github.com/owner/egressos/commit/egressos_commit_777',
+        replaced: true,
+      });
+
+    render(<SyncPanel project="egressos" allowUpload={true} />);
+
+    await waitFor(() => {
+      expect(mockApiFetch).toHaveBeenCalledWith('/github/config?project=egressos');
+    });
+
+    const urlInput = screen.getByRole('textbox', { name: /url do arquivo/i });
+    const repoInput = screen.getByRole('textbox', { name: /repositório/i });
+    const branchInput = screen.getByRole('textbox', { name: /branch/i });
+    const pathInput = screen.getByRole('textbox', { name: /caminho/i });
+
+    expect(urlInput.value).toBe('');
+    expect(repoInput.value).toBe('');
+    expect(branchInput.value).toBe('main');
+    expect(pathInput.value).toBe('');
+
+    fireEvent.change(urlInput, {
+      target: { value: 'https://github.com/owner/egressos/tree/main/dados' },
+    });
+    fireEvent.change(repoInput, { target: { value: 'owner/egressos' } });
+    fireEvent.change(pathInput, { target: { value: 'dados' } });
+
+    // Trigger download of the 21 JSON files
+    fireEvent.click(screen.getByRole('button', { name: /baixar e importar/i }));
+
+    await waitFor(() => {
+      expect(mockApiFetch).toHaveBeenCalledWith('/github/download', {
+        method: 'POST',
+        body: JSON.stringify({
+          project: 'egressos',
+          url: 'https://github.com/owner/egressos/tree/main/dados',
+        }),
+      });
+    });
+
+    expect(await screen.findByText(/21 arquivos json e 1\.142 registros/i)).toBeDefined();
+    expect(importedListener).toHaveBeenCalledTimes(1);
+
+    // Trigger upload of the 21 JSON files
+    fireEvent.click(screen.getByRole('button', { name: /enviar para o github/i }));
+
+    await waitFor(() => {
+      expect(mockApiFetch).toHaveBeenCalledWith('/github/check?project=egressos');
+      expect(mockApiFetch).toHaveBeenCalledWith('/github/upload', {
+        method: 'POST',
+        body: JSON.stringify({ project: 'egressos', confirmOverwrite: true }),
+      });
+    });
+
+    expect(await screen.findByText(/enviado com sucesso/i)).toBeDefined();
+    window.removeEventListener('egressos:imported', importedListener);
+  });
+});
+
 

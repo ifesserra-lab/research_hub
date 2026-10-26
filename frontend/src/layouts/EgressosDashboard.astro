@@ -1,0 +1,121 @@
+---
+// SEP-035: layout da área Egressos — menu lateral exclusivo do projeto Egressos
+// (FR-001..FR-003: nenhum registro ou aba do Horizon ou do SRC aparece aqui).
+const EGRESSOS_TABS = [
+  { key: 'egressos_perfil', label: 'Perfis de Egressos' },
+  { key: 'vitrine', label: 'Vitrine de Egressos' },
+  { key: 'panorama', label: 'Panorama do Coorte' },
+  { key: 'analise', label: 'Análise do Grupo' },
+  { key: 'consolidado', label: 'Consolidado Salarial' },
+  { key: 'empresas_porte', label: 'Empresas — Porte e Setor' },
+  { key: 'empresas_aliases', label: 'Empresas — Aliases' },
+  { key: 'empresas_linkedin_data', label: 'Empresas — Dados LinkedIn' },
+  { key: 'empresas_linkedin_urls', label: 'Empresas — URLs LinkedIn' },
+  { key: 'fapes_fomento', label: 'Fomento FAPES / PRODEST' },
+  { key: 'impacto', label: 'Indicadores de Impacto' },
+  { key: 'trajetoria', label: 'Trajetória Salarial' },
+  { key: 'renda_por_senioridade', label: 'Renda por Senioridade' },
+  { key: 'cargos_ao_longo_do_tempo', label: 'Cargos ao Longo do Tempo' },
+  { key: 'codigofonte_2026', label: 'Pesquisa Código Fonte 2026' },
+  { key: 'codigofonte_historico', label: 'Código Fonte — Histórico' },
+  { key: 'salario_minimo', label: 'Salário Mínimo Nacional' },
+  { key: 'ibge_series', label: 'Séries IBGE / Macro' },
+  { key: 'so_benchmarks', label: 'Stack Overflow Benchmarks' },
+  { key: 'recorte_cursos', label: 'Recorte por Cursos (BSI/ECA)' },
+  { key: 'mapa_mundi', label: 'Mapa-Múndi (Camada Base)' },
+];
+---
+<html lang="pt-br">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>ResearchHub — Projeto Egressos</title>
+  </head>
+  <body class="m-0 font-sans antialiased bg-slate-50 text-slate-900 flex min-h-screen">
+    <div class="w-72 bg-slate-900 text-white flex flex-col min-h-screen shrink-0">
+      <div class="p-6 border-b border-slate-800 flex items-center gap-3">
+        <img src="/logo-icon.svg" alt="ResearchHub Logo" class="w-7 h-7" />
+        <div>
+          <h2 class="text-xl font-bold tracking-tight">ResearchHub</h2>
+          <p class="text-xs text-slate-400">Projeto Egressos</p>
+        </div>
+      </div>
+      <nav class="flex-1 px-4 py-4 overflow-y-auto space-y-4">
+        <ul class="space-y-1">
+          <li>
+            <a href="/egressos" class="block px-3 py-2 rounded-md text-slate-200 hover:bg-slate-800 hover:text-white transition-colors font-medium">
+              Resumo & Sincronização
+            </a>
+          </li>
+          <li>
+            <a href="/egressos/tabelas" class="block px-3 py-2 rounded-md text-slate-200 hover:bg-slate-800 hover:text-white transition-colors font-medium">
+              Tabelas de Dados (21)
+            </a>
+          </li>
+        </ul>
+        <div class="pt-2 border-t border-slate-800">
+          <p class="px-3 pb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
+            Arquivos de dados/ (21)
+          </p>
+          <ul class="space-y-0.5 text-sm">
+            {EGRESSOS_TABS.map((t) => (
+              <li>
+                <a
+                  href={`/egressos/tabelas?tab=${t.key}`}
+                  data-egressos-tab={t.key}
+                  class="block px-3 py-1.5 rounded-md text-slate-300 hover:bg-slate-800 hover:text-white transition-colors truncate"
+                >
+                  {t.label}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </nav>
+      <div class="p-4 border-t border-slate-800 space-y-1">
+        <a href="/projects" id="trocar-projeto" class="block px-3 py-2 rounded-md text-slate-300 hover:bg-slate-800 hover:text-white transition-colors">↩ Trocar projeto</a>
+        <a href="#" id="logout" class="block px-3 py-2 rounded-md hover:bg-red-900/50 text-red-400 transition-colors">Sair</a>
+      </div>
+    </div>
+    <div class="flex-1 p-8 overflow-auto">
+      <div class="max-w-7xl mx-auto">
+        <slot />
+      </div>
+    </div>
+    <script>
+      import { invoke } from '@tauri-apps/api/core';
+      (async () => {
+        try {
+          const { authenticated } = await invoke<{ authenticated: boolean }>('session_status');
+          if (!authenticated) {
+            localStorage.removeItem('token');
+            window.location.replace('/login');
+          }
+        } catch {}
+      })();
+
+      document.getElementById('logout')?.addEventListener('click', async (e) => {
+        e.preventDefault();
+        try { await invoke('logout'); } catch {}
+        localStorage.removeItem('token');
+        window.location.href = '/login';
+      });
+
+      let unsaved = false;
+      window.addEventListener('egressos:dirty', (ev: Event) => {
+        unsaved = !!(ev as CustomEvent).detail;
+      });
+      document.getElementById('trocar-projeto')?.addEventListener('click', (e) => {
+        if (
+          unsaved &&
+          !window.confirm(
+            'Há alterações não salvas neste projeto. Trocar de projeto agora pode perder o trabalho em andamento. Continuar?'
+          )
+        ) {
+          e.preventDefault();
+        }
+      });
+    </script>
+  </body>
+</html>

@@ -23,6 +23,12 @@ const projects = [
     description: 'JSON consolidado do SRC/Ifes (extensão e ensino)',
     href: '/src',
   },
+  {
+    id: 'egressos',
+    title: 'Egressos',
+    description: 'Painel de carreira e renda dos egressos do IFES Campus Serra (21 tabelas JSON da pasta dados/)',
+    href: '/egressos',
+  },
 ];
 
 describe('ProjectSelector', () => {
@@ -31,20 +37,29 @@ describe('ProjectSelector', () => {
     vi.restoreAllMocks();
   });
 
-  it('renders one distinguishable card per project', () => {
+  it('renders one distinguishable card per project including Egressos', () => {
     render(<ProjectSelector projects={projects} onSelect={() => {}} />);
     expect(screen.getByRole('heading', { name: 'Horizon' })).toBeDefined();
     expect(screen.getByRole('heading', { name: 'SRC' })).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'Egressos' })).toBeDefined();
     expect(screen.getByText(/Tabelas canônicas do DataLake/i)).toBeDefined();
     expect(screen.getByText(/JSON consolidado do SRC/i)).toBeDefined();
+    expect(screen.getByText(/21 tabelas JSON da pasta dados/i)).toBeDefined();
   });
 
-  it('reports the chosen project to the caller', () => {
+  it('includes Egressos in DEFAULT_PROJECTS when rendered without explicit prop', () => {
+    render(<ProjectSelector onSelect={() => {}} />);
+    expect(screen.getByRole('heading', { name: 'Horizon' })).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'SRC' })).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'Egressos' })).toBeDefined();
+  });
+
+  it('reports the chosen project (including Egressos -> /egressos) to the caller', () => {
     const onSelect = vi.fn();
     render(<ProjectSelector projects={projects} onSelect={onSelect} />);
-    fireEvent.click(screen.getByRole('button', { name: /SRC/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Egressos/i }));
     expect(onSelect).toHaveBeenCalledTimes(1);
-    expect(onSelect).toHaveBeenCalledWith(projects[1]);
+    expect(onSelect).toHaveBeenCalledWith(projects[2]);
   });
 
   it('asks before switching when there are unsaved changes and blocks on cancel', () => {

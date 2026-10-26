@@ -1,0 +1,76 @@
+---
+// SEP-035 / US1+US2+US4: página principal do projeto Egressos — resumo da base,
+// import/export da pasta local dados/ e sincronização GitHub via token.
+import EgressosDashboard from '../../layouts/EgressosDashboard.astro';
+import EgressosDataControl from '../../components/EgressosDataControl.jsx';
+import SyncPanel from '../../components/SyncPanel.jsx';
+---
+
+<EgressosDashboard>
+  <h1 class="text-2xl font-bold text-slate-900 mb-2">Projeto Egressos</h1>
+  <p class="text-slate-600 mb-8">
+    Curadoria dos 21 arquivos JSON da pasta <code>dados/</code> do estudo de Egressos do IFES Campus Serra, mantidos isolados do Horizon e do SRC.
+  </p>
+
+  <div id="egressos-resumo" class="bg-white border border-slate-200 rounded-xl shadow-sm p-6 max-w-3xl">
+    <h2 class="text-lg font-semibold text-slate-800 mb-3">Base atual</h2>
+    <p id="egressos-resumo-empty" class="text-sm text-slate-500">
+      Nenhum dado carregado ainda — importe a pasta <code>dados/</code> do Egressos abaixo.
+      A base atual (se houver) será substituída com criação automática de snapshot de segurança.
+    </p>
+    <dl id="egressos-resumo-stats" class="hidden grid-cols-2 md:grid-cols-3 gap-4 text-center">
+      <div class="bg-slate-50 rounded-lg p-3">
+        <dt class="text-xs text-slate-500">Arquivos JSON</dt>
+        <dd id="egressos-stat-files" class="text-lg font-bold text-slate-800">—</dd>
+      </div>
+      <div class="bg-slate-50 rounded-lg p-3">
+        <dt class="text-xs text-slate-500">Total de Registros</dt>
+        <dd id="egressos-stat-rows" class="text-lg font-bold text-slate-800">—</dd>
+      </div>
+      <div class="bg-slate-50 rounded-lg p-3">
+        <dt class="text-xs text-slate-500">Origem / Status</dt>
+        <dd id="egressos-stat-origin" class="text-sm font-semibold text-emerald-700 truncate">Carregada</dd>
+      </div>
+    </dl>
+  </div>
+
+  <EgressosDataControl client:load />
+  <SyncPanel client:load project="egressos" allowUpload={true} />
+
+  <script>
+    import { apiFetch } from '../../services/api.js';
+
+    function renderStats(totalFiles: number, totalRows: number, originLabel?: string) {
+      if (!totalFiles) return;
+      document.getElementById('egressos-resumo-empty')?.classList.add('hidden');
+      const stats = document.getElementById('egressos-resumo-stats');
+      stats?.classList.remove('hidden');
+      stats?.classList.add('grid');
+      const fEl = document.getElementById('egressos-stat-files');
+      const rEl = document.getElementById('egressos-stat-rows');
+      const oEl = document.getElementById('egressos-stat-origin');
+      if (fEl) fEl.textContent = String(totalFiles);
+      if (rEl) rEl.textContent = (totalRows ?? 0).toLocaleString('pt-BR');
+      if (oEl && originLabel) oEl.textContent = originLabel;
+    }
+
+    apiFetch('/egressos/catalog')
+      .then((cat: any) => {
+        if (cat && cat.loaded) {
+          renderStats(cat.total_files, cat.total_rows, 'Base local ativa');
+        }
+      })
+      .catch(() => {});
+
+    document.addEventListener('egressos:imported', (ev: Event) => {
+      const event = ev as CustomEvent<{
+        total_files?: number;
+        total_rows?: number;
+        path?: string;
+      }>;
+      const s = event.detail;
+      if (!s) return;
+      renderStats(s.total_files ?? 21, s.total_rows ?? 0, s.path || 'Recém-importada');
+    });
+  </script>
+</EgressosDashboard>

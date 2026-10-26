@@ -1,13 +1,17 @@
 CARGO := $(HOME)/.cargo/bin/cargo
 
 # Terminals launched from a snap (VS Code, some emulators) export an
-# LD_LIBRARY_PATH pointing at /snap/core20 libraries, which collide with the
-# system glibc and make the binary die with:
-#   symbol lookup error: ... undefined symbol: __libc_pthread_init
-# Dropping the variables is enough; they are never needed to run this app.
-# The cargo→tauri→app chain *appends* whatever LD_LIBRARY_PATH it inherits,
-# so these must be gone before `cargo tauri dev` starts (SEP-032 debugging).
-RUN := env -u LD_LIBRARY_PATH -u LD_PRELOAD -u SNAP -u SNAP_NAME
+# LD_LIBRARY_PATH, XDG_DATA_DIRS and GSETTINGS_SCHEMA_DIR pointing at
+# /snap/... libraries and schemas, which collide with the system glibc and GTK:
+#   - symbol lookup error: ... undefined symbol: __libc_pthread_init
+#   - GLib-GIO-ERROR: Settings schema 'org.gnome.settings-daemon.plugins.xsettings'
+#     does not contain a key named 'antialiasing'
+# Dropping/resetting these variables before `cargo tauri dev` starts prevents both.
+RUN := env -u LD_LIBRARY_PATH -u LD_PRELOAD -u SNAP -u SNAP_NAME \
+  -u GSETTINGS_SCHEMA_DIR -u GTK_PATH -u GIO_MODULE_DIR \
+  -u GDK_PIXBUF_MODULE_FILE -u GDK_PIXBUF_MODULEDIR \
+  -u GTK_EXE_PREFIX -u GTK_DATA_PREFIX \
+  XDG_DATA_DIRS=/usr/local/share:/usr/share:/var/lib/snapd/desktop
 
 .PHONY: build dev run test bundle docker-bundle clean
 

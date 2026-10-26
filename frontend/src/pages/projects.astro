@@ -1,6 +1,6 @@
 ---
-// SEP-033 / FR-001..FR-002: nova página principal pós-login. Nenhuma base é
-// carregada aqui — a escolha do projeto é que leva à área de trabalho dele.
+// SEP-033 / SEP-035 (FR-001..FR-002): página principal pós-login com seleção
+// entre Horizon, SRC e Egressos. Nenhuma base é carregada antes da escolha.
 import ProjectSelector from '../components/ProjectSelector.jsx';
 
 const PROJECTS = [
@@ -16,6 +16,12 @@ const PROJECTS = [
     description: 'JSON consolidado do SRC/Ifes (ações de extensão e ensino)',
     href: '/src',
   },
+  {
+    id: 'egressos',
+    title: 'Egressos',
+    description: 'Painel de carreira e renda dos egressos do IFES Campus Serra (21 tabelas JSON da pasta dados/)',
+    href: '/egressos',
+  },
 ];
 ---
 <html lang="pt-BR">
@@ -26,7 +32,6 @@ const PROJECTS = [
   </head>
   <body class="m-0 font-sans antialiased bg-slate-50 text-slate-900 min-h-screen flex flex-col items-center justify-center gap-8">
     <script>
-      // Mesmo guard do dashboard: sem sessão, nenhuma área de trabalho (FR-002).
       import { invoke } from '@tauri-apps/api/core';
       (async () => {
         try {
@@ -38,11 +43,11 @@ const PROJECTS = [
         } catch {}
       })();
 
-      // US1-5 / FR-003: formulário SRC aberto confirma antes de trocar de
-      // projeto. A captura no container roda ANTES do onClick do cartão React;
-      // em recusa, a propagação é interrompida e nada navega.
       let unsaved = false;
       window.addEventListener('src:dirty', (ev: Event) => {
+        unsaved = !!(ev as CustomEvent).detail;
+      });
+      window.addEventListener('egressos:dirty', (ev: Event) => {
         unsaved = !!(ev as CustomEvent).detail;
       });
       document.addEventListener(

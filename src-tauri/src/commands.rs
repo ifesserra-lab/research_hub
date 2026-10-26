@@ -402,6 +402,173 @@ pub fn src_update_meta(
     crate::src_domain::update_meta(&conn, campus.as_deref())
 }
 
+// -------------------------------------------------------------- Egressos (035)
+
+#[tauri::command(async)]
+pub fn import_egressos_dir(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    path: Option<String>,
+) -> Result<Option<crate::egressos_domain::EgressosImportSummary>, AppError> {
+    use tauri::Emitter;
+    use tauri_plugin_dialog::DialogExt;
+
+    state.require_session()?;
+
+    let chosen = match path.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(p) => std::path::PathBuf::from(p),
+        None => {
+            let mut builder = app.dialog().file();
+            let default_dir = std::path::Path::new(crate::egressos_domain::DEFAULT_LOCAL_DADOS_DIR);
+            if default_dir.is_dir() {
+                builder = builder.set_directory(default_dir);
+            }
+            match builder.blocking_pick_folder() {
+                Some(f) => f.into_path().map_err(|e| AppError::Internal(e.to_string()))?,
+                None => return Ok(None),
+            }
+        }
+    };
+
+    let data_dir = app_data_dir(&app)?;
+    let mut conn = state.etl_connection()?;
+    let summary = crate::egressos_domain::import_dir(&mut conn, &chosen, &data_dir, |p| {
+        let _ = app.emit("egressos-import://progress", p);
+    })?;
+
+    Ok(Some(summary))
+}
+
+#[tauri::command(async)]
+pub fn export_egressos_dir(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    path: Option<String>,
+) -> Result<Option<crate::egressos_domain::EgressosExportSummary>, AppError> {
+    use tauri_plugin_dialog::DialogExt;
+
+    state.require_session()?;
+
+    let target = match path.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(p) => std::path::PathBuf::from(p),
+        None => {
+            let mut builder = app.dialog().file();
+            let default_dir = std::path::Path::new(crate::egressos_domain::DEFAULT_LOCAL_DADOS_DIR);
+            if default_dir.is_dir() {
+                builder = builder.set_directory(default_dir);
+            }
+            match builder.blocking_pick_folder() {
+                Some(f) => f.into_path().map_err(|e| AppError::Internal(e.to_string()))?,
+                None => return Ok(None),
+            }
+        }
+    };
+
+    let conn = state.etl_connection()?;
+    let summary = crate::egressos_domain::export_dir(&conn, &target)?;
+    Ok(Some(summary))
+}
+
+#[tauri::command(async)]
+pub fn egressos_get_catalog(
+    state: State<'_, AppState>,
+) -> Result<crate::egressos_domain::EgressosCatalogView, AppError> {
+    state.require_session()?;
+    let conn = state.db()?;
+    crate::egressos_domain::get_catalog(&conn)
+}
+
+#[tauri::command(async)]
+pub fn egressos_list_rows(
+    state: State<'_, AppState>,
+    file_key: String,
+    section_key: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+    search: Option<String>,
+    sort: Option<String>,
+    order: Option<String>,
+) -> Result<crate::egressos_domain::EgressosRowPage, AppError> {
+    state.require_session()?;
+    let conn = state.db()?;
+    crate::egressos_domain::list_rows(
+        &conn,
+        &file_key,
+        section_key.as_deref(),
+        limit,
+        offset,
+        search.as_deref(),
+        sort.as_deref(),
+        order.as_deref(),
+    )
+}
+
+#[tauri::command(async)]
+pub fn egressos_get_row(
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<crate::crud::Record, AppError> {
+    state.require_session()?;
+    let conn = state.db()?;
+    crate::egressos_domain::get_row(&conn, id)
+}
+
+#[tauri::command(async)]
+pub fn egressos_create_row(
+    state: State<'_, AppState>,
+    file_key: String,
+    section_key: Option<String>,
+    payload: crate::crud::Record,
+) -> Result<crate::crud::Record, AppError> {
+    state.require_session()?;
+    let conn = state.db()?;
+    crate::egressos_domain::create_row(&conn, &file_key, section_key.as_deref(), &payload)
+}
+
+#[tauri::command(async)]
+pub fn egressos_update_row(
+    state: State<'_, AppState>,
+    id: i64,
+    payload: crate::crud::Record,
+    propagate: Option<bool>,
+) -> Result<crate::egressos_domain::EgressosMutationResult, AppError> {
+    state.require_session()?;
+    let mut conn = state.db()?;
+    crate::egressos_domain::update_row(&mut conn, id, &payload, propagate.unwrap_or(false))
+}
+
+#[tauri::command(async)]
+pub fn egressos_delete_row(
+    state: State<'_, AppState>,
+    id: i64,
+    propagate: Option<bool>,
+) -> Result<crate::egressos_domain::EgressosDeleteResult, AppError> {
+    state.require_session()?;
+    let mut conn = state.db()?;
+    crate::egressos_domain::delete_row(&mut conn, id, propagate.unwrap_or(false))
+}
+
+#[tauri::command(async)]
+pub fn egressos_get_envelope(
+    state: State<'_, AppState>,
+    file_key: String,
+) -> Result<crate::crud::Record, AppError> {
+    state.require_session()?;
+    let conn = state.db()?;
+    crate::egressos_domain::get_envelope(&conn, &file_key)
+}
+
+#[tauri::command(async)]
+pub fn egressos_update_envelope(
+    state: State<'_, AppState>,
+    file_key: String,
+    payload: crate::crud::Record,
+) -> Result<crate::crud::Record, AppError> {
+    state.require_session()?;
+    let conn = state.db()?;
+    crate::egressos_domain::update_envelope(&conn, &file_key, &payload)
+}
+
 // ----------------------------------------------------------- special ops (020)
 
 // ------------------------------------------------------- GitHub sync (034)
@@ -432,7 +599,6 @@ pub async fn github_download(
     use tauri::Emitter;
     state.require_session()?;
 
-    let source = crate::sync_domain::normalize_url(&url)?;
     let data_dir = app_data_dir(&app)?;
     let config = crate::sync_domain::load_config(&data_dir)?;
     let client = crate::sync_github::GitHubClient::new(
@@ -441,17 +607,36 @@ pub async fn github_download(
     );
     let mut conn = state.etl_connection()?;
 
-    let result = crate::sync_github::download_and_import(
-        &mut conn,
-        &data_dir,
-        &project,
-        &source,
-        &client,
-        &|p| {
-            let _ = app.emit("sync://progress", p);
-        },
-    )
-    .await;
+    let result = if project == "egressos" {
+        let dir_source = crate::sync_domain::normalize_egressos_source(&url)?;
+        crate::sync_github::download_egressos_dir(
+            &mut conn,
+            &data_dir,
+            &dir_source,
+            &client,
+            &|p| {
+                let _ = app.emit("sync://progress", p);
+            },
+        )
+        .await
+        .and_then(|summary| {
+            serde_json::to_value(summary)
+                .map_err(|e| AppError::Internal(format!("resumo ilegível: {e}")))
+        })
+    } else {
+        let source = crate::sync_domain::normalize_url(&url)?;
+        crate::sync_github::download_and_import(
+            &mut conn,
+            &data_dir,
+            &project,
+            &source,
+            &client,
+            &|p| {
+                let _ = app.emit("sync://progress", p);
+            },
+        )
+        .await
+    };
 
     let _ = app.emit(
         "sync://progress",
@@ -511,25 +696,40 @@ pub async fn github_upload(
         crate::sync_github::GITHUB_API,
         config.token,
     );
-    let bytes = {
-        let conn = state.etl_connection()?;
-        let original = std::fs::read(data_dir.join(crate::import::ORIGINAL_ARCHIVE)).ok();
-        let (b, _tables, _preserved) =
-            crate::export::build_archive(&conn, original.as_deref(), |_| {})?;
-        b
-    };
 
-    let result = crate::sync_github::upload_horizon_export(
-        bytes,
-        &data_dir,
-        &project,
-        confirm_overwrite.unwrap_or(false),
-        &client,
-        &|p| {
-            let _ = app.emit("sync://progress", p);
-        },
-    )
-    .await;
+    let result = if project == "egressos" {
+        let mut conn = state.etl_connection()?;
+        crate::sync_github::upload_egressos_dir(
+            &mut conn,
+            &data_dir,
+            confirm_overwrite.unwrap_or(false),
+            &client,
+            &|p| {
+                let _ = app.emit("sync://progress", p);
+            },
+        )
+        .await
+    } else {
+        let bytes = {
+            let conn = state.etl_connection()?;
+            let original = std::fs::read(data_dir.join(crate::import::ORIGINAL_ARCHIVE)).ok();
+            let (b, _tables, _preserved) =
+                crate::export::build_archive(&conn, original.as_deref(), |_| {})?;
+            b
+        };
+
+        crate::sync_github::upload_horizon_export(
+            bytes,
+            &data_dir,
+            &project,
+            confirm_overwrite.unwrap_or(false),
+            &client,
+            &|p| {
+                let _ = app.emit("sync://progress", p);
+            },
+        )
+        .await
+    };
 
     let _ = app.emit(
         "sync://progress",

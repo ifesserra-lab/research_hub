@@ -88,6 +88,12 @@ export default function SyncPanel({ project = 'horizon', allowUpload = false }) 
         const rows = summary.total_rows ?? 0;
         const tables = summary.tables?.length ?? 0;
         summaryText = `${rows.toLocaleString('pt-BR')} registros em ${tables} tabelas importados com sucesso.`;
+      } else if (project === 'egressos') {
+        const filesCount = summary.total_files ?? 21;
+        const rowsCount = summary.total_rows ?? 0;
+        summaryText = `${filesCount} arquivos JSON e ${rowsCount.toLocaleString('pt-BR')} registros importados com sucesso.`;
+        window.dispatchEvent(new CustomEvent('egressos:imported', { detail: summary }));
+        document.dispatchEvent(new CustomEvent('egressos:imported', { detail: summary }));
       } else {
         const acoes = summary.total_acoes ?? 0;
         const part = summary.total_participacoes ?? 0;
@@ -314,7 +320,9 @@ export default function SyncPanel({ project = 'horizon', allowUpload = false }) 
       <form onSubmit={handleDownload} className="space-y-4">
         <div>
           <label htmlFor="sync-url" className="block text-xs font-medium text-slate-700 mb-1">
-            URL do arquivo no GitHub
+            {project === 'egressos'
+              ? 'URL da pasta dados/ no GitHub'
+              : 'URL do arquivo no GitHub'}
           </label>
           <input
             id="sync-url"
@@ -324,6 +332,8 @@ export default function SyncPanel({ project = 'horizon', allowUpload = false }) 
             placeholder={
               project === 'horizon'
                 ? 'https://raw.githubusercontent.com/owner/repo/main/exports/exports_canonical.zip'
+                : project === 'egressos'
+                ? 'https://github.com/owner/repo/tree/main/dados'
                 : 'https://raw.githubusercontent.com/owner/repo/main/dados/src_consolidado.json'
             }
             value={url}
@@ -351,7 +361,9 @@ export default function SyncPanel({ project = 'horizon', allowUpload = false }) 
             Envio para o GitHub
           </h3>
           <p className="text-xs text-slate-500 mb-4">
-            Configure o repositório de destino para exportar a base do Horizon.
+            {project === 'egressos'
+              ? 'Configure o repositório e a pasta de destino para publicar os 21 arquivos JSON do Egressos em um único commit.'
+              : 'Configure o repositório de destino para exportar a base do Horizon.'}
           </p>
 
           <p className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
@@ -394,14 +406,14 @@ export default function SyncPanel({ project = 'horizon', allowUpload = false }) 
               </div>
               <div>
                 <label htmlFor="dest-path" className="block text-xs font-medium text-slate-700 mb-1">
-                  Caminho do arquivo
+                  {project === 'egressos' ? 'Caminho da pasta' : 'Caminho do arquivo'}
                 </label>
                 <input
                   id="dest-path"
                   name="dest-path"
                   type="text"
                   aria-label="Caminho do arquivo"
-                  placeholder="exports/exports_canonical.zip"
+                  placeholder={project === 'egressos' ? 'dados' : 'exports/exports_canonical.zip'}
                   value={destPath}
                   onChange={(e) => setDestPath(e.target.value)}
                   disabled={busy}

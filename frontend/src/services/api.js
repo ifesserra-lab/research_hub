@@ -59,6 +59,56 @@ const ROUTES = [
   [/^\/src\/participacoes\/(\d+)$/, 'DELETE', (m) =>
     invoke('src_delete_participacao', { id: Number(m[1]) })],
 
+  // SEP-035: dedicated Egressos routes (must precede generic /{entity})
+  [/^\/egressos\/import$/, 'POST', (_m, b) =>
+    invoke('import_egressos_dir', { path: b?.path ?? null })],
+
+  [/^\/egressos\/export$/, 'POST', (_m, b) =>
+    invoke('export_egressos_dir', { path: b?.path ?? null })],
+
+  [/^\/egressos\/catalog$/, 'GET', () =>
+    invoke('egressos_get_catalog')],
+
+  [/^\/egressos\/files\/([^/?]+)\/envelope$/, 'GET', (m) =>
+    invoke('egressos_get_envelope', { fileKey: m[1] })],
+
+  [/^\/egressos\/files\/([^/?]+)\/envelope$/, 'PUT', (m, b) =>
+    invoke('egressos_update_envelope', { fileKey: m[1], payload: b ?? {} })],
+
+  [/^\/egressos\/files\/([^/?]+)\/rows$/, 'GET', (m, _b, q) =>
+    invoke('egressos_list_rows', {
+      fileKey: m[1],
+      sectionKey: q.get('section'),
+      limit: q.has('limit') ? Number(q.get('limit')) : null,
+      offset: q.has('offset') ? Number(q.get('offset')) : null,
+      search: q.get('search'),
+      sort: q.get('sort'),
+      order: q.get('order'),
+    })],
+
+  [/^\/egressos\/files\/([^/?]+)\/rows$/, 'POST', (m, b, q) =>
+    invoke('egressos_create_row', {
+      fileKey: m[1],
+      sectionKey: b?.section_key ?? q.get('section'),
+      payload: b?.payload ?? b ?? {},
+    })],
+
+  [/^\/egressos\/rows\/(\d+)$/, 'GET', (m) =>
+    invoke('egressos_get_row', { id: Number(m[1]) })],
+
+  [/^\/egressos\/rows\/(\d+)$/, 'PUT', (m, b) =>
+    invoke('egressos_update_row', {
+      id: Number(m[1]),
+      payload: b?.payload ?? b ?? {},
+      propagate: Boolean(b?.propagate),
+    })],
+
+  [/^\/egressos\/rows\/(\d+)$/, 'DELETE', (m, _b, q) =>
+    invoke('egressos_delete_row', {
+      id: Number(m[1]),
+      propagate: q.get('propagate') === 'true',
+    })],
+
   [/^\/auth\/login$/, 'POST', (_m, b) =>
     invoke('login', { email: b.email, password: b.password })],
 
@@ -178,6 +228,13 @@ export async function apiFetch(endpoint, options = {}) {
 // SEP-034: encapsula o listener de sync://progress mantendo a fronteira única.
 export function onSyncProgress(callback) {
   return listen('sync://progress', (event) => {
+    callback(event.payload);
+  });
+}
+
+// SEP-035: encapsula o listener de egressos-import://progress mantendo a fronteira única.
+export function onEgressosImportProgress(callback) {
+  return listen('egressos-import://progress', (event) => {
     callback(event.payload);
   });
 }
