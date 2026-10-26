@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/001_init.sql"),
     include_str!("../migrations/002_src_tables.sql"),
+    include_str!("../migrations/003_egressos_tables.sql"),
 ];
 
 pub const DEFAULT_ADMIN_USERNAME: &str = "admin@admin.com";
@@ -114,6 +115,7 @@ mod tests {
 
     /// SC-001: the schema is verified by querying it, not by reading the file.
     /// SEP-033: +3 tabelas do domínio SRC (src_meta, src_acoes, src_participacoes).
+    /// SEP-035: +2 tabelas do domínio Egressos (egressos_files, egressos_rows).
     #[test]
     fn migration_creates_nineteen_tables() {
         let conn = open_in_memory().unwrap();
@@ -126,9 +128,68 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            count, 19,
-            "esperado 19 tabelas (15 exportadas + admins + 3 do domínio SRC)"
+            count, 21,
+            "esperado 21 tabelas (15 exportadas + admins + 3 do domínio SRC + 2 do domínio Egressos)"
         );
+    }
+
+    /// SEP-035 T003: o domínio Egressos tem tabelas próprias (`egressos_files` e
+    /// `egressos_rows`) com FK ON DELETE CASCADE, sem tocar Horizon nem SRC.
+    #[test]
+    fn migration_creates_egressos_domain_tables() {
+        let conn = open_in_memory().unwrap();
+
+        let files = table_columns(&conn, "egressos_files");
+        for col in [
+            "file_key",
+            "kind",
+            "primary_section",
+            "envelope_json",
+            "imported_at",
+        ] {
+            assert!(
+                files.iter().any(|c| c == col),
+                "egressos_files: coluna '{col}' ausente"
+            );
+        }
+
+        let rows = table_columns(&conn, "egressos_rows");
+        for col in [
+            "id",
+            "file_key",
+            "section_key",
+            "ord",
+            "record_key",
+            "search_text",
+            "raw_json",
+        ] {
+            assert!(
+                rows.iter().any(|c| c == col),
+                "egressos_rows: coluna '{col}' ausente"
+            );
+        }
+
+        conn.execute(
+            "INSERT INTO egressos_files (file_key, kind, primary_section, envelope_json) \
+             VALUES ('egressos_perfil', 'object_sections', 'egressos', '{}')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO egressos_rows (file_key, section_key, ord, record_key, search_text, raw_json) \
+             VALUES ('egressos_perfil', 'egressos', 0, 'A', 'a fulano', '{}')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "DELETE FROM egressos_files WHERE file_key = 'egressos_perfil'",
+            [],
+        )
+        .unwrap();
+        let remaining: i64 = conn
+            .query_row("SELECT COUNT(*) FROM egressos_rows", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(remaining, 0, "egressos_rows deve sofrer cascade ao remover egressos_files");
     }
 
     /// SEP-033 T004: o domínio SRC tem tabelas próprias no mesmo arquivo

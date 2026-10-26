@@ -441,6 +441,178 @@ impl GitHubClient {
         }
     }
 
+    /// Publica múltiplos arquivos de um diretório (ex.: os 21 `.json` de `dados/`
+    /// do projeto Egressos) em um único commit atômico via Git Data API (`FR-012`).
+    pub async fn upload_directory(
+        &self,
+        owner: &str,
+        repo: &str,
+        branch: &str,
+        dir: &str,
+        files: &[(String, Vec<u8>)],
+        message: &str,
+        project: &str,
+        on_progress: OnProgress<'_>,
+    ) -> Result<UploadResult, AppError> {
+        let total_bytes: usize = files.iter().map(|(_, b)| b.len()).sum();
+
+        on_progress(SyncProgress {
+            operation: "upload",
+            project: project.into(),
+            phase: "started",
+            bytes_done: 0,
+            bytes_total: Some(total_bytes as u64),
+        });
+
+        if total_bytes > self.max_bytes {
+            return Err(AppError::TooLarge {
+                limit_bytes: self.max_bytes,
+            });
+        }
+
+        let clean_dir = dir.trim_matches('/');
+        let blob_url = format!("{}/repos/{}/{}/git/blobs", self.base_url, owner, repo);
+        let mut tree_entries = Vec::with_capacity(files.len());
+        let mut bytes_sent: u64 = 0;
+
+        for (file_name, bytes) in files {
+            let content = base64::engine::general_purpose::STANDARD.encode(bytes);
+            let resp = self
+                .auth(self.http.post(&blob_url))
+                .json(&serde_json::json!({ "content": content, "encoding": "base64" }))
+                .send()
+                .await
+                .map_err(network_error)?;
+            if !resp.status().is_success() {
+                return Err(self.api_error(resp).await);
+            }
+            let blob: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| AppError::Network(format!("resposta ilegível do GitHub: {e}")))?;
+            let blob_sha = blob
+                .get("sha")
+                .and_then(|s| s.as_str())
+                .ok_or_else(|| AppError::Network("resposta do blob sem sha".into()))?
+                .to_string();
+
+            let entry_path = if clean_dir.is_empty() {
+                file_name.clone()
+            } else {
+                format!("{clean_dir}/{file_name}")
+            };
+            tree_entries.push(serde_json::json!({
+                "path": entry_path,
+                "mode": "100644",
+                "type": "blob",
+                "sha": blob_sha,
+            }));
+
+            bytes_sent += bytes.len() as u64;
+            on_progress(SyncProgress {
+                operation: "upload",
+                project: project.into(),
+                phase: "committing",
+                bytes_done: bytes_sent,
+                bytes_total: Some(total_bytes as u64),
+            });
+        }
+
+        let mut attempt = 0;
+        loop {
+            let base_sha = self.head_ref(owner, repo, branch).await?;
+
+            let tree_url = format!("{}/repos/{}/{}/git/trees", self.base_url, owner, repo);
+            let resp = self
+                .auth(self.http.post(&tree_url))
+                .json(&serde_json::json!({
+                    "base_tree": base_sha,
+                    "tree": tree_entries,
+                }))
+                .send()
+                .await
+                .map_err(network_error)?;
+            if !resp.status().is_success() {
+                return Err(self.api_error(resp).await);
+            }
+            let tree: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| AppError::Network(format!("resposta ilegível do GitHub: {e}")))?;
+            let tree_sha = tree
+                .get("sha")
+                .and_then(|s| s.as_str())
+                .ok_or_else(|| AppError::Network("resposta da tree sem sha".into()))?
+                .to_string();
+
+            let commit_url = format!("{}/repos/{}/{}/git/commits", self.base_url, owner, repo);
+            let resp = self
+                .auth(self.http.post(&commit_url))
+                .json(&serde_json::json!({
+                    "message": message,
+                    "tree": tree_sha,
+                    "parents": [base_sha],
+                }))
+                .send()
+                .await
+                .map_err(network_error)?;
+            if !resp.status().is_success() {
+                return Err(self.api_error(resp).await);
+            }
+            let commit: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| AppError::Network(format!("resposta ilegível do GitHub: {e}")))?;
+            let commit_sha = commit
+                .get("sha")
+                .and_then(|s| s.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let html_url = commit
+                .get("html_url")
+                .and_then(|s| s.as_str())
+                .unwrap_or_default()
+                .to_string();
+
+            let ref_url = format!(
+                "{}/repos/{}/{}/git/refs/heads/{}",
+                self.base_url, owner, repo, branch
+            );
+            let resp = self
+                .auth(self.http.patch(&ref_url))
+                .json(&serde_json::json!({ "sha": commit_sha, "force": false }))
+                .send()
+                .await
+                .map_err(network_error)?;
+            let status = resp.status().as_u16();
+            if status == 422 && attempt == 0 {
+                attempt += 1;
+                continue;
+            }
+            if status == 422 {
+                return Err(AppError::GithubApi {
+                    status: 422,
+                    hint: "o repositório mudou durante o envio; tente novamente".into(),
+                });
+            }
+            if status == 403 {
+                return Err(AppError::GithubApi {
+                    status: 403,
+                    hint: "sem permissão de escrita; nada foi gravado".into(),
+                });
+            }
+            if !resp.status().is_success() {
+                return Err(self.api_error(resp).await);
+            }
+
+            return Ok(UploadResult {
+                commit_sha,
+                html_url,
+                replaced: false,
+            });
+        }
+    }
+
     /// Checagem prévia do destino (T014): flags em vez de erro para branch/
     /// arquivo ausentes — quem falha é o upload. Repo ausente → NotFound.
     pub async fn check_destination(
@@ -492,7 +664,14 @@ impl GitHubClient {
                         .await
                         .map_err(|e| AppError::Network(format!("resposta ilegível do GitHub: {e}")))?;
                     info.file_exists = true;
-                    info.file_sha = v.get("sha").and_then(|s| s.as_str()).map(String::from);
+                    info.file_sha = if let Some(arr) = v.as_array() {
+                        arr.first()
+                            .and_then(|item| item.get("sha"))
+                            .and_then(|s| s.as_str())
+                            .map(String::from)
+                    } else {
+                        v.get("sha").and_then(|s| s.as_str()).map(String::from)
+                    };
                 }
                 404 => {}
                 s => {
@@ -621,8 +800,7 @@ pub async fn check_project_destination(
 ) -> Result<crate::sync_domain::CheckDestinationView, AppError> {
     crate::sync_domain::ensure_known_project(project)?;
     let file = crate::sync_domain::load_config(data_dir)?;
-    let empty = crate::sync_domain::ProjectSyncConfig::default();
-    let cfg = file.project(project).unwrap_or(&empty);
+    let cfg = crate::sync_domain::effective_project_config(project, &file);
     if cfg.repo.is_empty() || cfg.branch.is_empty() || cfg.path.is_empty() {
         return Err(AppError::SyncConfig(
             "Destino não configurado para este projeto.".into(),
@@ -656,8 +834,7 @@ pub async fn upload_horizon_export(
     crate::sync_domain::check_upload_allowed(project)?;
 
     let file = crate::sync_domain::load_config(data_dir)?;
-    let empty = crate::sync_domain::ProjectSyncConfig::default();
-    let cfg = file.project(project).unwrap_or(&empty);
+    let cfg = crate::sync_domain::effective_project_config(project, &file);
     if cfg.repo.is_empty() || cfg.branch.is_empty() || cfg.path.is_empty() {
         return Err(AppError::SyncConfig(
             "Destino não configurado para este projeto.".into(),
@@ -688,6 +865,137 @@ pub async fn upload_horizon_export(
     let message = "Export canônico ResearchHub";
     let mut res = client
         .upload_file(owner, repo, &cfg.branch, &cfg.path, bytes, message, project, on_progress)
+        .await?;
+    res.replaced = dest_info.file_exists;
+    Ok(res)
+}
+
+/// Baixa os 21 arquivos `.json` da pasta `dados/` do Egressos no GitHub,
+/// valida-os atomicamente, cria snapshot `egressos-pre-import-*` e importa
+/// na base local (`SEP-035`, `FR-011`).
+pub async fn download_egressos_dir(
+    conn: &mut rusqlite::Connection,
+    data_dir: &Path,
+    source: &crate::sync_domain::EgressosDirSource,
+    client: &GitHubClient,
+    on_progress: OnProgress<'_>,
+) -> Result<crate::egressos_domain::EgressosImportSummary, AppError> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let temp_dir = data_dir.join("sync_tmp").join(format!("egressos-{stamp}"));
+    std::fs::create_dir_all(&temp_dir)?;
+
+    let clean_dir = source.dir.trim_matches('/');
+    let mut download_err: Option<AppError> = None;
+
+    for def in crate::egressos_domain::EGRESSOS_FILES {
+        let remote_path = if clean_dir.is_empty() {
+            def.file_name.to_string()
+        } else {
+            format!("{clean_dir}/{}", def.file_name)
+        };
+        let file_src = NormalizedSource::File {
+            owner: source.owner.clone(),
+            repo: source.repo.clone(),
+            reference: source.reference.clone(),
+            path: remote_path,
+        };
+        match client
+            .download_to_temp(&file_src, "egressos", &temp_dir, on_progress)
+            .await
+        {
+            Ok(downloaded_tmp) => {
+                let canonical_dest = temp_dir.join(def.file_name);
+                if let Err(e) = std::fs::rename(&downloaded_tmp, &canonical_dest) {
+                    download_err = Some(AppError::Io(e));
+                    break;
+                }
+            }
+            Err(e) => {
+                download_err = Some(e);
+                break;
+            }
+        }
+    }
+
+    if let Some(err) = download_err {
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        return Err(err);
+    }
+
+    on_progress(SyncProgress {
+        operation: "download",
+        project: "egressos".into(),
+        phase: "importing",
+        bytes_done: 0,
+        bytes_total: None,
+    });
+
+    let import_res = crate::egressos_domain::import_dir(conn, &temp_dir, data_dir, |_| {});
+    let _ = std::fs::remove_dir_all(&temp_dir);
+
+    let mut summary = import_res?;
+    summary.path = format!(
+        "https://github.com/{}/{}/tree/{}/{}",
+        source.owner, source.repo, source.reference, clean_dir
+    );
+    Ok(summary)
+}
+
+/// Gera os 21 arquivos `.json` em memória a partir da base Egressos atual e
+/// envia-os ao GitHub em um único commit na branch configurada (`SEP-035`, `FR-012`).
+pub async fn upload_egressos_dir(
+    conn: &mut rusqlite::Connection,
+    data_dir: &Path,
+    confirm_overwrite: bool,
+    client: &GitHubClient,
+    on_progress: OnProgress<'_>,
+) -> Result<UploadResult, AppError> {
+    crate::sync_domain::check_upload_allowed("egressos")?;
+    let files = crate::egressos_domain::export_files_in_memory(conn)?;
+
+    let file = crate::sync_domain::load_config(data_dir)?;
+    let cfg = crate::sync_domain::effective_project_config("egressos", &file);
+    if cfg.repo.is_empty() || cfg.branch.is_empty() || cfg.path.is_empty() {
+        return Err(AppError::SyncConfig(
+            "Destino não configurado para o projeto Egressos.".into(),
+        ));
+    }
+    let (owner, repo) = cfg
+        .repo
+        .split_once('/')
+        .ok_or_else(|| AppError::SyncConfig("Repositório deve estar no formato 'owner/name'.".into()))?;
+
+    let total_bytes: usize = files.iter().map(|(_, b)| b.len()).sum();
+    if total_bytes > client.max_bytes {
+        return Err(AppError::TooLarge {
+            limit_bytes: client.max_bytes,
+        });
+    }
+
+    let dest_info = client
+        .check_destination(owner, repo, &cfg.branch, &cfg.path)
+        .await?;
+    if dest_info.file_exists && !confirm_overwrite {
+        return Err(AppError::Conflict(
+            "A pasta de destino já existe no repositório. Confirme a sobrescrita dos 21 arquivos JSON para prosseguir.".into(),
+        ));
+    }
+
+    let message = "Export dados Egressos ResearchHub (21 arquivos JSON)";
+    let mut res = client
+        .upload_directory(
+            owner,
+            repo,
+            &cfg.branch,
+            &cfg.path,
+            &files,
+            message,
+            "egressos",
+            on_progress,
+        )
         .await?;
     res.replaced = dest_info.file_exists;
     Ok(res)

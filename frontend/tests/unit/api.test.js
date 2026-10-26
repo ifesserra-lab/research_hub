@@ -304,3 +304,115 @@ describe('apiFetch GitHub routing', () => {
   });
 });
 
+// SEP-035: dedicated Egressos commands (T014, T023)
+describe('apiFetch Egressos routing', () => {
+  it('routes folder import with explicit path or null for dialog', async () => {
+    invoke.mockResolvedValue({ total_files: 21, total_rows: 1142 });
+    await apiFetch('/egressos/import', {
+      method: 'POST',
+      body: JSON.stringify({ path: '/home/thiagodeps/egressos/dados' }),
+    });
+    expect(invoke).toHaveBeenCalledWith('import_egressos_dir', {
+      path: '/home/thiagodeps/egressos/dados',
+    });
+
+    await apiFetch('/egressos/import', { method: 'POST' });
+    expect(invoke).toHaveBeenCalledWith('import_egressos_dir', { path: null });
+  });
+
+  it('routes folder export with explicit path or null for dialog', async () => {
+    invoke.mockResolvedValue({ total_files: 21, total_rows: 1142 });
+    await apiFetch('/egressos/export', {
+      method: 'POST',
+      body: JSON.stringify({ path: '/tmp/dados' }),
+    });
+    expect(invoke).toHaveBeenCalledWith('export_egressos_dir', { path: '/tmp/dados' });
+
+    await apiFetch('/egressos/export', { method: 'POST' });
+    expect(invoke).toHaveBeenCalledWith('export_egressos_dir', { path: null });
+  });
+
+  it('routes catalog view', async () => {
+    invoke.mockResolvedValue({ loaded: true, total_files: 21, files: [] });
+    await apiFetch('/egressos/catalog');
+    expect(invoke).toHaveBeenCalledWith('egressos_get_catalog');
+  });
+
+  it('routes file envelope get and update', async () => {
+    invoke.mockResolvedValue({ titulo: 'Perfis' });
+    await apiFetch('/egressos/files/egressos_perfil/envelope');
+    expect(invoke).toHaveBeenCalledWith('egressos_get_envelope', {
+      fileKey: 'egressos_perfil',
+    });
+
+    await apiFetch('/egressos/files/egressos_perfil/envelope', {
+      method: 'PUT',
+      body: JSON.stringify({ titulo: 'Novo Título' }),
+    });
+    expect(invoke).toHaveBeenCalledWith('egressos_update_envelope', {
+      fileKey: 'egressos_perfil',
+      payload: { titulo: 'Novo Título' },
+    });
+  });
+
+  it('lists and creates rows for a specific file and section', async () => {
+    invoke.mockResolvedValue({ items: [], total: 0 });
+    await apiFetch(
+      '/egressos/files/vitrine/rows?section=empresas&limit=25&offset=50&search=aevo&sort=nome&order=asc'
+    );
+    expect(invoke).toHaveBeenCalledWith('egressos_list_rows', {
+      fileKey: 'vitrine',
+      sectionKey: 'empresas',
+      limit: 25,
+      offset: 50,
+      search: 'aevo',
+      sort: 'nome',
+      order: 'asc',
+    });
+
+    invoke.mockResolvedValue({ id: 101, nome: 'AEVO' });
+    await apiFetch('/egressos/files/vitrine/rows', {
+      method: 'POST',
+      body: JSON.stringify({ section_key: 'empresas', payload: { nome: 'AEVO', n: 3 } }),
+    });
+    expect(invoke).toHaveBeenCalledWith('egressos_create_row', {
+      fileKey: 'vitrine',
+      sectionKey: 'empresas',
+      payload: { nome: 'AEVO', n: 3 },
+    });
+  });
+
+  it('gets, updates (with propagate flag) and deletes (with propagate flag) a row by id', async () => {
+    invoke.mockResolvedValue({ id: 42, label: 'A' });
+    await apiFetch('/egressos/rows/42');
+    expect(invoke).toHaveBeenCalledWith('egressos_get_row', { id: 42 });
+
+    invoke.mockResolvedValue({ record: { id: 42 }, propagated_count: 3 });
+    await apiFetch('/egressos/rows/42', {
+      method: 'PUT',
+      body: JSON.stringify({
+        payload: { cargo_atual: 'Staff Engineer' },
+        propagate: true,
+      }),
+    });
+    expect(invoke).toHaveBeenCalledWith('egressos_update_row', {
+      id: 42,
+      payload: { cargo_atual: 'Staff Engineer' },
+      propagate: true,
+    });
+
+    invoke.mockResolvedValue({ deleted: 1, propagated_deleted: 2 });
+    await apiFetch('/egressos/rows/42?propagate=true', { method: 'DELETE' });
+    expect(invoke).toHaveBeenCalledWith('egressos_delete_row', {
+      id: 42,
+      propagate: true,
+    });
+
+    await apiFetch('/egressos/rows/42', { method: 'DELETE' });
+    expect(invoke).toHaveBeenCalledWith('egressos_delete_row', {
+      id: 42,
+      propagate: false,
+    });
+  });
+});
+

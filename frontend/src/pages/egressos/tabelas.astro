@@ -1,0 +1,14 @@
+---
+// SEP-035 / US3: página dedicada de curadoria das 21 tabelas do Egressos.
+import EgressosDashboard from '../../layouts/EgressosDashboard.astro';
+import EgressosTablesPage from '../../components/EgressosTablesPage.jsx';
+---
+
+<EgressosDashboard>
+  <h1 class="text-2xl font-bold text-slate-900 mb-2">Tabelas do Projeto Egressos (21)</h1>
+  <p class="text-slate-600 mb-6">
+    Selecione qualquer uma das 21 abas correspondentes aos arquivos JSON da pasta <code>dados/</code> para consultar, buscar, ordenar, editar metadados e executar CRUD completo com propagação opcional entre tabelas relacionadas.
+  </p>
+
+  <EgressosTablesPage client:load />
+</EgressosDashboard>

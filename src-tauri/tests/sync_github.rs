@@ -921,3 +921,284 @@ async fn auditoria_de_vazamento_nenhum_erro_contem_token_ou_pii() {
 fn read_dir_empty(dir: &std::path::Path) -> bool {
     std::fs::read_dir(dir).map(|mut rd| rd.next().is_none()).unwrap_or(true)
 }
+
+// --------------------------------------------------------- SEP-035 (T030, T036)
+
+#[tokio::test]
+async fn download_egressos_dir_baixa_21_jsons_cria_snapshot_e_aborta_em_falha_parcial() {
+    use research_hub_lib::egressos_domain::{self, EGRESSOS_FILES, DEFAULT_LOCAL_DADOS_DIR};
+    use research_hub_lib::sync_domain::EgressosDirSource;
+    use research_hub_lib::sync_github::download_egressos_dir;
+
+    let server = MockServer::start().await;
+    let ref_dir = std::path::Path::new(DEFAULT_LOCAL_DADOS_DIR);
+
+    for def in EGRESSOS_FILES {
+        let body = std::fs::read_to_string(ref_dir.join(def.file_name)).unwrap();
+        Mock::given(method("GET"))
+            .and(path(format!("/repos/thiagodeps/egressos/contents/dados/{}", def.file_name)))
+            .respond_with(ResponseTemplate::new(200).set_body_string(body))
+            .mount(&server)
+            .await;
+    }
+
+    let data = tempfile::tempdir().unwrap();
+    let mut conn = db::open_in_memory().unwrap();
+    let src = EgressosDirSource {
+        owner: "thiagodeps".into(),
+        repo: "egressos".into(),
+        reference: "main".into(),
+        dir: "dados".into(),
+    };
+
+    // 1. Primeiro download popula os 21 arquivos
+    let summary1 = download_egressos_dir(
+        &mut conn,
+        data.path(),
+        &src,
+        &client(&server, Some("ghp_token_egressos")),
+        no_progress(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(summary1.total_files, 21);
+    assert!(summary1.total_rows > 1000);
+    assert!(summary1.snapshot.is_none());
+
+    // 2. Segundo download cria snapshot egressos-pre-import-*
+    let summary2 = download_egressos_dir(
+        &mut conn,
+        data.path(),
+        &src,
+        &client(&server, Some("ghp_token_egressos")),
+        no_progress(),
+    )
+    .await
+    .unwrap();
+    let snap = summary2.snapshot.expect("snapshot esperado no reimport via GitHub");
+    assert!(snap.starts_with("egressos-pre-import-"));
+
+    // 3. Se 1 dos 21 arquivos der 404, aborta sem alterar a base existente (FR-005, FR-011)
+    let broken_server = MockServer::start().await;
+    for def in EGRESSOS_FILES {
+        if def.file_key == "vitrine" {
+            Mock::given(method("GET"))
+                .and(path("/repos/thiagodeps/egressos/contents/dados/vitrine.json"))
+                .respond_with(ResponseTemplate::new(404))
+                .mount(&broken_server)
+                .await;
+        } else {
+            let body = std::fs::read_to_string(ref_dir.join(def.file_name)).unwrap();
+            Mock::given(method("GET"))
+                .and(path(format!("/repos/thiagodeps/egressos/contents/dados/{}", def.file_name)))
+                .respond_with(ResponseTemplate::new(200).set_body_string(body))
+                .mount(&broken_server)
+                .await;
+        }
+    }
+
+    let err = download_egressos_dir(
+        &mut conn,
+        data.path(),
+        &src,
+        &client(&broken_server, Some("ghp_token_egressos")),
+        no_progress(),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(wire(&err)["kind"], "not_found");
+    let cat = egressos_domain::get_catalog(&conn).unwrap();
+    assert_eq!(cat.total_files, 21);
+    assert_eq!(cat.total_rows, summary2.total_rows);
+}
+
+#[tokio::test]
+async fn upload_egressos_dir_publica_21_blobs_em_commit_unico_atomico() {
+    use research_hub_lib::egressos_domain::{self, DEFAULT_LOCAL_DADOS_DIR};
+    use research_hub_lib::sync_github::upload_egressos_dir;
+
+    let server = MockServer::start().await;
+    let temp = tempfile::tempdir().unwrap();
+    let mut conn = db::open_in_memory().unwrap();
+    egressos_domain::import_dir(
+        &mut conn,
+        std::path::Path::new(DEFAULT_LOCAL_DADOS_DIR),
+        temp.path(),
+        |_| {},
+    )
+    .unwrap();
+
+    let mut cfg = sync_domain::SyncConfigFile::default();
+    cfg.project_mut("egressos").repo = "thiagodeps/egressos".into();
+    cfg.project_mut("egressos").branch = "main".into();
+    cfg.project_mut("egressos").path = "dados".into();
+    sync_domain::save_config(temp.path(), &cfg).unwrap();
+
+    // Destination check
+    Mock::given(method("GET"))
+        .and(path("/repos/thiagodeps/egressos"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/thiagodeps/egressos/git/ref/heads/main"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "object": { "sha": "base_commit_sha" }
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/thiagodeps/egressos/contents/dados"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+
+    // Git Data API: 21 blobs + 1 tree + 1 commit + 1 ref patch
+    Mock::given(method("POST"))
+        .and(path("/repos/thiagodeps/egressos/git/blobs"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+            "sha": "blob_sha_egressos"
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/repos/thiagodeps/egressos/git/trees"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+            "sha": "tree_sha_egressos"
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/repos/thiagodeps/egressos/git/commits"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+            "sha": "commit_egressos_123",
+            "html_url": "https://github.com/thiagodeps/egressos/commit/commit_egressos_123"
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path("/repos/thiagodeps/egressos/git/refs/heads/main"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let res = upload_egressos_dir(
+        &mut conn,
+        temp.path(),
+        false,
+        &client(&server, Some("ghp_secret_egressos")),
+        no_progress(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(res.commit_sha, "commit_egressos_123");
+    assert_eq!(
+        res.html_url,
+        "https://github.com/thiagodeps/egressos/commit/commit_egressos_123"
+    );
+
+    let requests = server.received_requests().await.unwrap();
+    let blob_posts = requests
+        .iter()
+        .filter(|r| r.url.path() == "/repos/thiagodeps/egressos/git/blobs")
+        .count();
+    assert_eq!(blob_posts, 21, "deve criar exatamente 21 blobs para os 21 JSONs");
+
+    let tree_req = requests
+        .iter()
+        .find(|r| r.url.path() == "/repos/thiagodeps/egressos/git/trees")
+        .unwrap();
+    let tree_body: serde_json::Value = serde_json::from_slice(&tree_req.body).unwrap();
+    let entries = tree_body["tree"].as_array().unwrap();
+    assert_eq!(entries.len(), 21);
+    assert!(entries
+        .iter()
+        .any(|e| e["path"] == "dados/egressos_perfil.json"));
+}
+
+#[tokio::test]
+async fn isolamento_entre_tres_projetos_e_zero_vazamento_de_token_no_egressos() {
+    use research_hub_lib::egressos_domain::{self, DEFAULT_LOCAL_DADOS_DIR};
+    use research_hub_lib::sync_domain::EgressosDirSource;
+    use research_hub_lib::sync_github::{download_egressos_dir, upload_egressos_dir};
+
+    let temp = tempfile::tempdir().unwrap();
+    let mut conn = db::open_in_memory().unwrap();
+
+    // Popula dados no Horizon e no SRC
+    conn.execute("INSERT INTO campuses (id, name) VALUES (1, 'Serra')", [])
+        .unwrap();
+    let src_json = include_str!("fixtures/src_consolidado_exemplo.json");
+    research_hub_lib::src_domain::import(&mut conn, src_json, temp.path()).unwrap();
+
+    let horizon_before: i64 = conn
+        .query_row("SELECT COUNT(*) FROM campuses", [], |r| r.get(0))
+        .unwrap();
+    let src_acoes_before: i64 = conn
+        .query_row("SELECT COUNT(*) FROM src_acoes", [], |r| r.get(0))
+        .unwrap();
+    let src_part_before: i64 = conn
+        .query_row("SELECT COUNT(*) FROM src_participacoes", [], |r| r.get(0))
+        .unwrap();
+
+    // Importa, edita e exporta no Egressos
+    let summary = egressos_domain::import_dir(
+        &mut conn,
+        std::path::Path::new(DEFAULT_LOCAL_DADOS_DIR),
+        temp.path(),
+        |_| {},
+    )
+    .unwrap();
+    assert_eq!(summary.total_files, 21);
+
+    let mut rec = research_hub_lib::crud::Record::new();
+    rec.insert("label".into(), serde_json::json!("ISO1"));
+    rec.insert("nome".into(), serde_json::json!("Isolamento Teste"));
+    let created = egressos_domain::create_row(&conn, "egressos_perfil", None, &rec).unwrap();
+    let cid = created.get("id").and_then(|v| v.as_i64()).unwrap();
+    egressos_domain::delete_row(&mut conn, cid, true).unwrap();
+    egressos_domain::export_dir(&conn, &temp.path().join("out_iso")).unwrap();
+
+    // Contagens do Horizon e do SRC permanecem 100% inalteradas (FR-002, FR-003, SC-001)
+    let horizon_after: i64 = conn
+        .query_row("SELECT COUNT(*) FROM campuses", [], |r| r.get(0))
+        .unwrap();
+    let src_acoes_after: i64 = conn
+        .query_row("SELECT COUNT(*) FROM src_acoes", [], |r| r.get(0))
+        .unwrap();
+    let src_part_after: i64 = conn
+        .query_row("SELECT COUNT(*) FROM src_participacoes", [], |r| r.get(0))
+        .unwrap();
+
+    assert_eq!(horizon_before, horizon_after);
+    assert_eq!(src_acoes_before, src_acoes_after);
+    assert_eq!(src_part_before, src_part_after);
+
+    // Auditoria de segredo (FR-013): falhas de download/upload do Egressos nunca vazam o token
+    let secret = "ghp_secret_egressos_token_never_leak_777";
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(401))
+        .mount(&server)
+        .await;
+    let auth_client = GitHubClient::new(&server.uri(), Some(secret.to_string()));
+    let dir_src = EgressosDirSource {
+        owner: "thiagodeps".into(),
+        repo: "egressos".into(),
+        reference: "main".into(),
+        dir: "dados".into(),
+    };
+    let dl_err = download_egressos_dir(&mut conn, temp.path(), &dir_src, &auth_client, no_progress())
+        .await
+        .unwrap_err();
+    let ul_err = upload_egressos_dir(&mut conn, temp.path(), true, &auth_client, no_progress())
+        .await
+        .unwrap_err();
+
+    for e in [dl_err, ul_err] {
+        assert!(!e.to_string().contains(secret));
+        assert!(!format!("{e:?}").contains(secret));
+        assert!(!serde_json::to_string(&wire(&e)).unwrap().contains(secret));
+    }
+}
