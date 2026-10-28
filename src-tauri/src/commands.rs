@@ -417,17 +417,10 @@ pub fn import_egressos_dir(
 
     let chosen = match path.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         Some(p) => std::path::PathBuf::from(p),
-        None => {
-            let mut builder = app.dialog().file();
-            let default_dir = std::path::Path::new(crate::egressos_domain::DEFAULT_LOCAL_DADOS_DIR);
-            if default_dir.is_dir() {
-                builder = builder.set_directory(default_dir);
-            }
-            match builder.blocking_pick_folder() {
-                Some(f) => f.into_path().map_err(|e| AppError::Internal(e.to_string()))?,
-                None => return Ok(None),
-            }
-        }
+        None => match app.dialog().file().blocking_pick_folder() {
+            Some(f) => f.into_path().map_err(|e| AppError::Internal(e.to_string()))?,
+            None => return Ok(None),
+        },
     };
 
     let data_dir = app_data_dir(&app)?;
@@ -451,17 +444,10 @@ pub fn export_egressos_dir(
 
     let target = match path.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         Some(p) => std::path::PathBuf::from(p),
-        None => {
-            let mut builder = app.dialog().file();
-            let default_dir = std::path::Path::new(crate::egressos_domain::DEFAULT_LOCAL_DADOS_DIR);
-            if default_dir.is_dir() {
-                builder = builder.set_directory(default_dir);
-            }
-            match builder.blocking_pick_folder() {
-                Some(f) => f.into_path().map_err(|e| AppError::Internal(e.to_string()))?,
-                None => return Ok(None),
-            }
-        }
+        None => match app.dialog().file().blocking_pick_folder() {
+            Some(f) => f.into_path().map_err(|e| AppError::Internal(e.to_string()))?,
+            None => return Ok(None),
+        },
     };
 
     let conn = state.etl_connection()?;

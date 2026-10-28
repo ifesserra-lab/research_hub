@@ -1,11 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiFetch, onEgressosImportProgress } from '../services/api.js';
 
-const DEFAULT_DADOS_DIR = '/home/thiagodeps/egressos/dados';
-
 // SEP-035 / US2 (FR-004..FR-006, FR-010): importação e exportação direta da
-// pasta local de 21 arquivos JSON do projeto Egressos (`dados/`), sugerindo
-// `/home/thiagodeps/egressos/dados` por padrão e preservando 100% da estrutura.
+// pasta local de 21 arquivos JSON do projeto Egressos (`dados/`), preservando
+// 100% da estrutura.
 export default function EgressosDataControl() {
   const [catalog, setCatalog] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -106,8 +104,6 @@ export default function EgressosDataControl() {
       setExporting(false);
     }
   }
-
-  const defaultDir = catalog?.default_local_dir || DEFAULT_DADOS_DIR;
 
   return (
     <div className="space-y-6 mt-6">

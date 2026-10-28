@@ -926,12 +926,14 @@ fn read_dir_empty(dir: &std::path::Path) -> bool {
 
 #[tokio::test]
 async fn download_egressos_dir_baixa_21_jsons_cria_snapshot_e_aborta_em_falha_parcial() {
-    use research_hub_lib::egressos_domain::{self, EGRESSOS_FILES, DEFAULT_LOCAL_DADOS_DIR};
+    use research_hub_lib::egressos_domain::{self, EGRESSOS_FILES};
     use research_hub_lib::sync_domain::EgressosDirSource;
     use research_hub_lib::sync_github::download_egressos_dir;
 
     let server = MockServer::start().await;
-    let ref_dir = std::path::Path::new(DEFAULT_LOCAL_DADOS_DIR);
+    let data = tempfile::tempdir().unwrap();
+    let ref_dir = data.path().join("ref_dados");
+    egressos_domain::write_sample_dados_dir(&ref_dir);
 
     for def in EGRESSOS_FILES {
         let body = std::fs::read_to_string(ref_dir.join(def.file_name)).unwrap();
@@ -942,7 +944,6 @@ async fn download_egressos_dir_baixa_21_jsons_cria_snapshot_e_aborta_em_falha_pa
             .await;
     }
 
-    let data = tempfile::tempdir().unwrap();
     let mut conn = db::open_in_memory().unwrap();
     let src = EgressosDirSource {
         owner: "thiagodeps".into(),
@@ -962,7 +963,7 @@ async fn download_egressos_dir_baixa_21_jsons_cria_snapshot_e_aborta_em_falha_pa
     .await
     .unwrap();
     assert_eq!(summary1.total_files, 21);
-    assert!(summary1.total_rows > 1000);
+    assert!(summary1.total_rows >= 50);
     assert!(summary1.snapshot.is_none());
 
     // 2. Segundo download cria snapshot egressos-pre-import-*
@@ -1014,15 +1015,17 @@ async fn download_egressos_dir_baixa_21_jsons_cria_snapshot_e_aborta_em_falha_pa
 
 #[tokio::test]
 async fn upload_egressos_dir_publica_21_blobs_em_commit_unico_atomico() {
-    use research_hub_lib::egressos_domain::{self, DEFAULT_LOCAL_DADOS_DIR};
+    use research_hub_lib::egressos_domain;
     use research_hub_lib::sync_github::upload_egressos_dir;
 
     let server = MockServer::start().await;
     let temp = tempfile::tempdir().unwrap();
+    let dados_dir = temp.path().join("dados_src");
+    egressos_domain::write_sample_dados_dir(&dados_dir);
     let mut conn = db::open_in_memory().unwrap();
     egressos_domain::import_dir(
         &mut conn,
-        std::path::Path::new(DEFAULT_LOCAL_DADOS_DIR),
+        &dados_dir,
         temp.path(),
         |_| {},
     )
@@ -1119,11 +1122,13 @@ async fn upload_egressos_dir_publica_21_blobs_em_commit_unico_atomico() {
 
 #[tokio::test]
 async fn isolamento_entre_tres_projetos_e_zero_vazamento_de_token_no_egressos() {
-    use research_hub_lib::egressos_domain::{self, DEFAULT_LOCAL_DADOS_DIR};
+    use research_hub_lib::egressos_domain;
     use research_hub_lib::sync_domain::EgressosDirSource;
     use research_hub_lib::sync_github::{download_egressos_dir, upload_egressos_dir};
 
     let temp = tempfile::tempdir().unwrap();
+    let dados_dir = temp.path().join("dados_src");
+    egressos_domain::write_sample_dados_dir(&dados_dir);
     let mut conn = db::open_in_memory().unwrap();
 
     // Popula dados no Horizon e no SRC
@@ -1145,7 +1150,7 @@ async fn isolamento_entre_tres_projetos_e_zero_vazamento_de_token_no_egressos() 
     // Importa, edita e exporta no Egressos
     let summary = egressos_domain::import_dir(
         &mut conn,
-        std::path::Path::new(DEFAULT_LOCAL_DADOS_DIR),
+        &dados_dir,
         temp.path(),
         |_| {},
     )

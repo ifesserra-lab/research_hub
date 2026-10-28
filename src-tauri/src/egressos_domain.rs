@@ -17,8 +17,8 @@ use serde_json::{Map, Value as Json};
 use std::collections::HashMap;
 use std::path::Path;
 
-/// Caminho local padrão sugerido na máquina do curador (FR-004).
-pub const DEFAULT_LOCAL_DADOS_DIR: &str = "/home/thiagodeps/egressos/dados";
+/// Caminho local padrão (vazio por padrão — o curador escolhe a pasta via diálogo ou link GitHub).
+pub const DEFAULT_LOCAL_DADOS_DIR: &str = "";
 
 const SENTINEL_SECTION_KEY: &str = "__egressos_section__";
 const SENTINEL_SHAPE_KEY: &str = "__section_shape__";
@@ -1182,15 +1182,13 @@ pub fn get_catalog(conn: &Connection) -> Result<EgressosCatalogView, AppError> {
         });
     }
 
-    let default_exists = Path::new(DEFAULT_LOCAL_DADOS_DIR).is_dir();
-
     Ok(EgressosCatalogView {
         loaded,
         imported_at,
         total_files: if loaded { EGRESSOS_FILES.len() } else { 0 },
         total_rows,
-        default_local_dir: DEFAULT_LOCAL_DADOS_DIR.to_string(),
-        default_local_dir_exists: default_exists,
+        default_local_dir: String::new(),
+        default_local_dir_exists: false,
         files,
     })
 }
@@ -1805,6 +1803,236 @@ pub fn update_envelope(
     get_envelope(conn, file_key)
 }
 
+/// Gera um diretório `dados/` completo e autocontido com os 21 arquivos JSON
+/// canônicos do projeto Egressos para uso em testes unitários e de integração
+/// (inclusive em runners de CI onde `/home/thiagodeps/egressos/dados` não existe).
+pub fn write_sample_dados_dir(dest: &Path) {
+    use serde_json::json;
+    std::fs::create_dir_all(dest).expect("criar diretório de fixture dados/");
+
+    for def in EGRESSOS_FILES {
+        let val: Json = match def.file_key {
+            "egressos_perfil" => {
+                let mut egressos = Vec::with_capacity(50);
+                for i in 0..50 {
+                    let label = if i == 0 {
+                        "A".to_string()
+                    } else {
+                        format!("E{:02}", i)
+                    };
+                    egressos.push(json!({
+                        "label": label,
+                        "nome": format!("Egresso {label}"),
+                        "curso": if i % 2 == 0 { "bsi" } else { "eca" },
+                        "cargo_atual": "Engenheiro de Software",
+                        "empresa_atual": "IFES",
+                        "local_atual": "Vitória, ES",
+                        "area_atual": "Desenvolvimento"
+                    }));
+                }
+                json!({
+                    "titulo": "Perfis de Egressos",
+                    "atualizado_em": "2026-10-01",
+                    "egressos": egressos,
+                    "cursos": [
+                        { "sigla": "bsi", "nome": "Sistemas de Informação" },
+                        { "sigla": "eca", "nome": "Engenharia de Controle e Automação" }
+                    ]
+                })
+            }
+            "vitrine" => json!({
+                "titulo": "Vitrine de Egressos",
+                "perfis": [
+                    {
+                        "rotulo": "A",
+                        "nome": "Egresso A",
+                        "curso": "bsi",
+                        "cargo": "Engenheiro de Software",
+                        "empresa": "IFES",
+                        "lugar": "Vitória, ES"
+                    }
+                ],
+                "empresas": [{ "empresa": "Akamai Technologies", "porte": "Grande", "setor": "Cloud" }],
+                "empresas_verificadas": [{ "empresa": "Akamai Technologies", "porte": "Grande" }],
+                "contratando": [{ "empresa": "AEVO", "vagas": 3 }],
+                "porte": [{ "porte": "Grande", "n": 10 }],
+                "setor": [{ "setor": "Tecnologia", "n": 25 }],
+                "regiao_das_empresas": [{ "regiao": "Sudeste", "n": 30 }],
+                "paises_no_exterior": ["Estados Unidos", "Portugal"],
+                "trilhas": [{ "trilha": "Engenharia de Software", "n": 20 }],
+                "regioes": [{ "regiao": "Grande Vitória", "n": 35 }]
+            }),
+            "panorama" => json!({
+                "titulo": "Panorama do Coorte",
+                "coorte": [
+                    {
+                        "rotulo": "A",
+                        "cargo_atual": "Engenheiro de Software",
+                        "empregador_atual": "IFES",
+                        "origem": "Nacional",
+                        "modalidade": "Remoto",
+                        "area_atual_nome": "Desenvolvimento",
+                        "inicio_carreira": 2020
+                    }
+                ],
+                "salto": [{ "rotulo": "A", "de": "Estágio", "para": "Pleno" }],
+                "areas": [{ "area": "Desenvolvimento", "n": 30 }],
+                "familias": [{ "familia": "Backend", "n": 15 }],
+                "origem_comum": [{ "origem": "IFES Serra", "n": 50 }]
+            }),
+            "analise" => json!({
+                "titulo": "Análise do Grupo",
+                "rows": [
+                    {
+                        "label": "A",
+                        "curso": "bsi",
+                        "anos": 4,
+                        "n_empresas": 2,
+                        "n_exp": 3,
+                        "trilha": "Tech",
+                        "em_tech": true,
+                        "exterior": false
+                    }
+                ],
+                "top_tech": [{ "tech": "Rust", "n": 12 }],
+                "funcoes": [{ "funcao": "Backend", "n": 18 }],
+                "metodos": [{ "metodo": "Scrum", "n": 25 }],
+                "intl_timeline": [{ "ano": 2025, "n": 5 }],
+                "trajetoria_destaque": [{ "label": "A", "resumo": "Destaque" }],
+                "hist_multiplicadores": [{ "faixa": "2x-4x", "n": 20 }]
+            }),
+            "consolidado" => json!({
+                "titulo": "Consolidado Salarial",
+                "perfis": [
+                    {
+                        "perfil": "A",
+                        "trilha": "Tech",
+                        "em_tech": true,
+                        "anos": 4,
+                        "bolsa": true,
+                        "med_ini": 3500.0,
+                        "med_atual": 12000.0,
+                        "cresc": 3.43
+                    }
+                ],
+                "agregado": [{ "metrica": "mediana", "valor": 10500.0 }],
+                "pv": [{ "grupo": "Com IC", "med": 11000.0 }],
+                "por_ano_sm": [{ "ano": 2025, "sm": 7.5 }],
+                "series_por_perfil": [{ "perfil": "A", "ano": 2025, "valor": 12000.0 }]
+            }),
+            "empresas_porte" => json!({
+                "AEVO": {
+                    "empresa": "AEVO",
+                    "porte": "Média",
+                    "origem": "Nacional",
+                    "setor": "SaaS",
+                    "funcionarios": "51-200"
+                },
+                "Akamai Technologies": {
+                    "empresa": "Akamai Technologies",
+                    "porte": "Grande",
+                    "origem": "Internacional",
+                    "setor": "Cloud",
+                    "funcionarios": "10000+"
+                }
+            }),
+            "empresas_aliases" => json!({
+                "AEVO": {
+                    "aliases": ["Aevo Inovação"],
+                    "atual": true,
+                    "n_egressos_atual": 2
+                },
+                "Akamai Technologies": {
+                    "aliases": ["Akamai"],
+                    "atual": true,
+                    "n_egressos_atual": 1
+                }
+            }),
+            "empresas_linkedin_data" => json!({
+                "Akamai Technologies": {
+                    "nome_oficial": "Akamai Technologies",
+                    "industry_linkedin": "Technology, Information and Internet",
+                    "headcount_linkedin": "10001+",
+                    "hq_local": "Cambridge, MA",
+                    "website": "https://www.akamai.com",
+                    "founded": 1998
+                }
+            }),
+            "empresas_linkedin_urls" => json!({
+                "Akamai Technologies": {
+                    "url": "https://www.linkedin.com/company/akamai-technologies",
+                    "slug": "akamai-technologies",
+                    "confianca": "alta",
+                    "via": "manual"
+                }
+            }),
+            "codigofonte_historico" => json!({
+                "fonte": "Código Fonte TV",
+                "media_por_senioridade": {
+                    "2025": {
+                        "Estágio": 2100.0,
+                        "Júnior": 4500.0,
+                        "Pleno": 8500.0,
+                        "Sênior": 14500.0,
+                        "Especialista/Tech Lead": 19500.0
+                    }
+                },
+                "ipca_fator_para_2026": {
+                    "2024": 1.09,
+                    "2025": 1.04
+                }
+            }),
+            "ibge_series" => json!({
+                "fonte_geral": "IBGE",
+                "series": {
+                    "ipca": {
+                        "fonte": "IBGE/SIDRA",
+                        "unidade": "% a.a."
+                    }
+                }
+            }),
+            "recorte_cursos" => json!({
+                "instituicao": "IFES Campus Serra",
+                "cursos": {
+                    "bsi": {
+                        "nome": "Sistemas de Informação",
+                        "sigla": "BSI",
+                        "n": 30
+                    },
+                    "eca": {
+                        "nome": "Engenharia de Controle e Automação",
+                        "sigla": "ECA",
+                        "n": 20
+                    }
+                }
+            }),
+            "mapa_mundi" => json!({
+                "projection": "equirectangular",
+                "paths": ["M0 0 L10 10 Z", "M20 20 L30 30 Z"],
+                "viewBox": [0, 0, 1000, 500],
+                "lat_range": [-60, 85]
+            }),
+            _ => {
+                let mut root = Map::new();
+                root.insert("titulo".into(), json!(def.title));
+                for &sec in def.sections {
+                    let mut row = Map::new();
+                    for (idx, &col) in def.columns.iter().enumerate() {
+                        if col != "_key" {
+                            row.insert(col.to_string(), json!(format!("{}_{}", col, idx + 1)));
+                        }
+                    }
+                    root.insert(sec.to_string(), json!([Json::Object(row)]));
+                }
+                Json::Object(root)
+            }
+        };
+
+        let text = serde_json::to_string_pretty(&val).expect("serializar fixture JSON");
+        std::fs::write(dest.join(def.file_name), text).expect("gravar arquivo de fixture JSON");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1813,11 +2041,7 @@ mod tests {
     use std::collections::HashSet;
 
     fn copy_reference_dados_to(dest: &Path) {
-        std::fs::create_dir_all(dest).unwrap();
-        let src = Path::new(DEFAULT_LOCAL_DADOS_DIR);
-        for def in EGRESSOS_FILES {
-            std::fs::copy(src.join(def.file_name), dest.join(def.file_name)).unwrap();
-        }
+        write_sample_dados_dir(dest);
     }
 
     /// SEP-035 T005: o catálogo declara exatamente os 21 arquivos de `dados/`
@@ -1865,7 +2089,7 @@ mod tests {
 
         let summary1 = import_dir(&mut conn, &dados_dir, &app_data, |_| {}).unwrap();
         assert_eq!(summary1.total_files, 21);
-        assert!(summary1.total_rows > 1000);
+        assert!(summary1.total_rows >= 50);
         assert!(!summary1.replaced);
         assert!(summary1.snapshot.is_none());
 
@@ -1889,7 +2113,7 @@ mod tests {
         assert_eq!(after_failed as usize, summary2.total_rows);
     }
 
-    /// SEP-035 T013 / SC-003: importar os 21 arquivos reais de `/home/thiagodeps/egressos/dados`
+    /// SEP-035 T013 / SC-003: importar os 21 arquivos de `dados/`
     /// e exportar sem edições produz 21 arquivos JSON 100% equivalentes campo a campo.
     #[test]
     fn round_trip_of_all_twenty_one_real_files_is_lossless() {
@@ -1897,9 +2121,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let app_data = tmp.path().join("app_data");
         let export_out = tmp.path().join("exported");
+        let ref_dir = tmp.path().join("ref_dados");
+        copy_reference_dados_to(&ref_dir);
 
-        let ref_dir = Path::new(DEFAULT_LOCAL_DADOS_DIR);
-        import_dir(&mut conn, ref_dir, &app_data, |_| {}).unwrap();
+        import_dir(&mut conn, &ref_dir, &app_data, |_| {}).unwrap();
         let exp_summary = export_dir(&conn, &export_out).unwrap();
         assert_eq!(exp_summary.total_files, 21);
 
@@ -1922,9 +2147,11 @@ mod tests {
     fn crud_and_envelope_work_across_section_types() {
         let mut conn = db::open_in_memory().unwrap();
         let tmp = tempfile::tempdir().unwrap();
+        let dados_dir = tmp.path().join("dados");
+        copy_reference_dados_to(&dados_dir);
         import_dir(
             &mut conn,
-            Path::new(DEFAULT_LOCAL_DADOS_DIR),
+            &dados_dir,
             tmp.path(),
             |_| {},
         )
@@ -2003,9 +2230,11 @@ mod tests {
     fn optional_propagation_updates_and_deletes_across_related_tables() {
         let mut conn = db::open_in_memory().unwrap();
         let tmp = tempfile::tempdir().unwrap();
+        let dados_dir = tmp.path().join("dados");
+        copy_reference_dados_to(&dados_dir);
         import_dir(
             &mut conn,
-            Path::new(DEFAULT_LOCAL_DADOS_DIR),
+            &dados_dir,
             tmp.path(),
             |_| {},
         )
