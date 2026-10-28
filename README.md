@@ -18,7 +18,8 @@ O Research Hub foi concebido como um aplicativo de processo único e arquitetura
 - [Projetos e Domínios Suportados](#projetos-e-domínios-suportados)
   - [Projeto Horizon](#1-projeto-horizon-curadoria-acadêmica)
   - [Projeto SRC](#2-projeto-src-extensão-e-ensino)
-  - [Sincronização com o GitHub](#3-sincronização-com-github-novidade)
+  - [Projeto Egressos](#3-projeto-egressos-carreira-e-renda-de-egressos)
+  - [Sincronização com o GitHub](#4-sincronização-com-github-novidade)
 - [Requisitos para o Código e Execução](#requisitos-para-o-código-e-execução)
   - [Sistemas Operacionais Suportados](#sistemas-operacionais-suportados)
   - [Dependências do Sistema Operacional (Linux)](#dependências-do-sistema-operacional-linux)
@@ -83,9 +84,18 @@ Gerencia as ações do Sistema de Registro e Emissão de Certificados do Ifes at
 - **Participações Aninhadas**: Editor exclusivo para gerenciar participantes com distinção entre **Público-alvo** e **Equipe de execução**, preservando dados de atividade, funções, cargas horárias e vínculos.
 - **Privacidade Rigorosa**: Os dados de participantes contêm dados pessoais sensíveis (CPF, e-mail, nomes) e são mantidos estritamente locais, com bloqueio arquitetural contra envio para repositórios remotos.
 
-### 3. Sincronização com GitHub (Novidade)
-- **Download Remoto**: Importe pacotes canônicos (ZIP do Horizon ou JSON do SRC) diretamente informando URLs do GitHub (links `raw.githubusercontent.com` ou assets de releases).
-- **Upload Atômico**: Envie novos pacotes exportados do Horizon diretamente para branches do GitHub via Git Data API (criação de blobs, trees e commits sem necessidade de clonar o repositório localmente).
+### 3. Projeto Egressos (Carreira e Renda de Egressos)
+Gerencia os conjuntos de dados analíticos e longitudinais do portal **Egressos** a partir de um diretório estruturado com **21 arquivos JSON independentes** (`dados/*.json`), cobrindo:
+- **Visão Geral, Trajetória e Transição**: `overview`, `trajectory_survival`, `transition_velo_by_empresa_porte`, `company_scale_Matrix`.
+- **Demografia, Paridade e Equidade**: `gender`, `age`, `race`, `parity`, `geographic`.
+- **Remuneração, Mobilidade e Retenção**: `income_detailed`, `salary_bands`, `retention_flow`, `academic_link`, `dependents`, `Course_value`.
+- **Setores, Carreiras e Empregadores**: `career`, `cnae_sections`, `employers_ranking`, `formal_employment`, `top_employers_by_gender`, `top_employers_by_race`.
+- **21 Abas Dedicadas + Sub-Abas**: Cada um dos 21 arquivos JSON possui sua própria aba principal na tela `/egressos/tabelas`, com sub-abas para arquivos que agrupam múltiplos arrays, busca textual, ordenação por coluna, CRUD completo de linhas e editor de metadados de cabeçalho do arquivo (*envelope*).
+- **Propagação Opcional Entre Tabelas**: Ao editar ou excluir registros que representam um **Egresso** (`Alumni`) ou **Empresa** (`Company`), o curador pode optar via caixa de seleção (`propagate`) por aplicar a alteração apenas na tabela atual ou propagar automaticamente os campos compartilhados em todas as tabelas relacionadas.
+
+### 4. Sincronização com GitHub (Novidade)
+- **Download Remoto**: Importe pacotes canônicos (ZIP do Horizon, JSON do SRC ou os **21 arquivos JSON do diretório `dados/` do Egressos**) diretamente informando o repositório/URL do GitHub.
+- **Upload Atômico**: Envie novos pacotes exportados do Horizon ou **todos os 21 arquivos `.json` do diretório `dados/` do Egressos em um único commit atômico** diretamente para branches do GitHub via Git Data API (criação de blobs, trees e commits sem necessidade de clonar o repositório localmente).
 - **Gerenciamento Local de Token**: Armazene com segurança seu Personal Access Token (PAT) do GitHub em arquivo local com permissão restrita `0600`, sem nunca expor o token em logs ou mensagens de erro.
 
 ---
@@ -144,8 +154,8 @@ sudo pacman -Syu --needed \
 ```
 
 > ⚠️ **Aviso sobre Snap e VS Code no Linux:**
-> Se o terminal for iniciado a partir de um aplicativo instalado via Snap (como VS Code ou emuladores de terminal Snap), ele pode injetar um `LD_LIBRARY_PATH` apontando para `/snap/core20`, o que causa conflito com a glibc do sistema e dispara o erro `symbol lookup error: undefined symbol: __libc_pthread_init`.
-> O `Makefile` do projeto já limpa automaticamente essas variáveis de ambiente (`RUN := env -u LD_LIBRARY_PATH ...`). Ao rodar binários manualmente fora do make, use:
+> Se o terminal for iniciado a partir de um aplicativo instalado via Snap (como VS Code ou emuladores de terminal Snap), ele pode injetar variáveis apontando para `/snap/...` (`LD_LIBRARY_PATH`, `GSETTINGS_SCHEMA_DIR`, `XDG_DATA_DIRS`, `GTK_PATH`), o que causa conflito com a glibc ou com os schemas GSettings/GTK do sistema.
+> A partir da **v1.5.0**, o núcleo Rust sanitiza automaticamente as variáveis GSettings/GTK contaminadas pelo Snap na inicialização (`sanitize_snap_gtk_env`), e o `Makefile` também limpa `LD_LIBRARY_PATH` e variáveis de runtime Snap (`RUN := env -u LD_LIBRARY_PATH ...`). Ao rodar binários manualmente fora do make em terminais Snap, caso haja conflito de `LD_LIBRARY_PATH`, use:
 > ```bash
 > env -u LD_LIBRARY_PATH -u LD_PRELOAD -u SNAP ./src-tauri/target/debug/research-hub
 > ```
@@ -229,16 +239,17 @@ Instaladores pré-compilados prontos para uso são distribuídos na [página ofi
    - Usuário padrão semeado: `admin@admin.com` / `admin123`.
    - Você também pode criar novas contas locais na tela `/register`.
 2. **Seleção de Projeto**:
-   - Na tela principal `/projects`, escolha trabalhar no **Horizon** (15 entidades acadêmicas) ou no **SRC** (extensão e ensino).
+   - Na tela principal `/projects`, escolha trabalhar no **Horizon** (15 entidades acadêmicas), no **SRC** (extensão e ensino) ou no **Egressos** (21 arquivos JSON de carreira e renda).
 3. **Importação de Dados**:
    - **Horizon**: Carregue o arquivo `exports_canonical.zip` (formato atual somente JSON ou legado com Parquet) via botão de diálogo ou arrastando o arquivo para a janela.
    - **SRC**: Carregue o arquivo `src_consolidado.json`.
-   - **GitHub Sync**: Informe a URL do repositório/release para download direto.
+   - **Egressos**: Selecione a pasta local contendo os 21 arquivos `.json` (ex.: `dados/`).
+   - **GitHub Sync**: Informe o repositório/URL do GitHub para download ou envio direto (pacote do Horizon, arquivo do SRC ou diretório `dados/` com os 21 JSONs do Egressos).
 4. **Curadoria**:
-   - Navegue pelas entidades, utilize a busca global e busca direta por ID, filtre e ordene colunas.
-   - Edite registros inline, gerencie participações ou funda duplicatas de forma transacional.
+   - Navegue pelas entidades ou pelas 21 abas do Egressos, utilize a busca global e busca direta por ID, filtre e ordene colunas.
+   - Edite registros inline, escolha se deseja propagar alterações compartilhadas entre tabelas (no Egressos), gerencie participações (no SRC) ou funda duplicatas de forma transacional (no Horizon).
 5. **Exportação**:
-   - Gere o pacote canônico de volta com fidelidade total de tipos de dados e arquivos preservados.
+   - Gere o pacote canônico ou a pasta `dados/` com os 21 arquivos `.json` de volta com fidelidade total de tipos de dados e estrutura preservada.
 
 ---
 
@@ -278,7 +289,24 @@ chmod +x ResearchHub_*.AppImage
 
 ## Notas de Versão (Patch Notes / Changelog)
 
-### v1.4.0 (Atual — Feature 034: Sincronização GitHub & Pacotes Aninhados)
+### v1.5.0 (Atual — Feature 035: Espaço de Dados do Projeto Egressos, CRUD nas 21 Tabelas & Sincronização GitHub de Pasta)
+- **Novo Projeto Egressos (`/egressos` e `/egressos/tabelas`)**:
+  - Terceiro cartão no seletor de projetos (`/projects`) dedicado ao ecossistema de dados de **Carreira e Renda de Egressos**.
+  - Migração relacional `003_egressos_tables.sql` (`egressos_files`, `egressos_rows`, `egressos_meta`) com isolamento total das tabelas do Horizon e do SRC.
+- **Importação e Exportação Fiel dos 21 Arquivos JSON (`dados/*.json`)**:
+  - Validação atômica dos 21 arquivos `.json` obrigatórios na importação de pasta local, com criação automática de snapshot de segurança (`egressos-pre-import-*.db`) antes de qualquer substituição.
+  - Exportação *lossless* (100% fiel em chaves, tipos numéricos/booleanos/nulls, objetos escalares e metadados de cabeçalho) de volta para os 21 arquivos `.json` separados.
+- **21 Abas Dedicadas + Sub-Abas e CRUD Completo**:
+  - 21 abas primárias (1:1 com cada arquivo `.json` do projeto Egressos) e sub-abas automáticas para arquivos com múltiplos arrays internos (como `gender`, `race`, `parity`, `geographic`, `employers_ranking`, etc.).
+  - Busca instantânea, ordenação por coluna, paginação com salto direto, criação, edição e exclusão de linhas, além de editor dedicado para os metadados de cabeçalho (*envelope*) de cada arquivo.
+  - **Opção de Propagação Entre Tabelas (`propagate`)**: Ao editar ou excluir registros de **Egresso** (`Alumni`) ou **Empresa** (`Company`), o usuário pode escolher se a alteração deve ser aplicada somente na tabela atual ou propagada para os campos equivalentes nas demais tabelas relacionadas.
+- **Sincronização GitHub em Nível de Diretório (`dados/`)**:
+  - Download direto dos 21 arquivos `.json` a partir do diretório `dados/` de um repositório GitHub (público ou privado via PAT).
+  - Upload atômico dos 21 arquivos `.json` para `dados/` em um **único commit Git** via Git Data API (criação de 21 blobs + tree + commit + atualização de ref).
+- **Compatibilidade Linux / Ambientes Snap**:
+  - Sanitização automática no núcleo Rust (`sanitize_snap_gtk_env`) e no `Makefile` contra variáveis `GSETTINGS_SCHEMA_DIR`, `XDG_DATA_DIRS` e `GTK_PATH` injetadas por terminais do VS Code Snap.
+
+### v1.4.0 – v1.4.1 (Feature 034: Sincronização GitHub & Pacotes Aninhados)
 - **Sincronização com GitHub (SEP-034)**:
   - Download e importação direta de arquivos canônicos a partir de URLs do GitHub (repositórios públicos ou privados com token).
   - Suporte a links raw e assets de release do GitHub.

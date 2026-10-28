@@ -4,7 +4,29 @@ Complete history of versions, enhancements, bug fixes, and new features in **Res
 
 ---
 
-## v1.4.0 (Current — GitHub Sync & Nested Archives)
+## v1.5.0 (Current — Egressos Data Workspace, 21-Table CRUD & Directory GitHub Sync)
+*Source Branch: `035-egressos-data-workspace`*
+
+### Egressos Project (SEP-035)
+- **Third Project in Selector (`/projects`)**: Added the **Egressos** project card alongside **Horizon** and **SRC**, with dedicated routes `/egressos` (Data Control & GitHub Sync) and `/egressos/tabelas` (21-Table Curation).
+- **Isolated Relational Schema**: Migration `003_egressos_tables.sql` (`egressos_files`, `egressos_rows`, `egressos_meta`) strictly isolated from Horizon and SRC tables.
+- **Lossless Import & Export of 21 JSON Files (`dados/*.json`)**:
+  - Atomic pre-import validation requiring the presence and syntactic validity of all 21 Egressos `.json` files.
+  - Automatic safety snapshot (`egressos-pre-import-*.db`) created prior to replacing local data.
+  - Lossless export back to a local folder keeping all 21 separate `.json` files, preserving numeric types, booleans, nulls, scalar objects (`overview`), and file-level header metadata (*envelope*).
+- **21 Dedicated Tabs + Sub-Tabs & Full CRUD**:
+  - 21 primary tabs mapped 1:1 to each `.json` file and automatic sub-tabs for files containing multiple internal arrays.
+  - Instant text search, column sorting, direct page jump pagination, row creation/editing/deletion, and a dedicated editor for each file's header metadata (*envelope*).
+  - **Optional Cross-Table Propagation (`propagate`)**: Explicit UI checkbox allowing the curator to choose between applying an edit/delete only to the current table or automatically propagating shared **Alumni** or **Company** fields across related tables.
+- **Directory-Level GitHub Synchronization (`dados/`)**:
+  - Remote download of all 21 `.json` files directly from the `dados/` directory of the configured GitHub repository and branch.
+  - Atomic upload of all 21 `.json` files in a **single Git commit** via the Git Data API (creating 21 blobs + tree + commit + ref update).
+- **Linux / Snap Environment Compatibility**:
+  - Automatic sanitization of Snap-contaminated GSettings/GTK environment variables (`sanitize_snap_gtk_env`) in the Rust core and `Makefile`.
+
+---
+
+## v1.4.0 – v1.4.1 (GitHub Sync & Nested Archives)
 *Source Branch: `034-github-sync`*
 
 ### GitHub Synchronization (SEP-034)

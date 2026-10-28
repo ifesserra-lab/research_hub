@@ -4,7 +4,29 @@ Histórico completo de versões, melhorias, correções de bugs e novas funciona
 
 ---
 
-## v1.4.0 (Atual — Sincronização GitHub & Pacotes Aninhados)
+## v1.5.0 (Atual — Espaço de Dados Egressos, CRUD nas 21 Tabelas & Sincronização GitHub de Pasta)
+*Branch de Origem: `035-egressos-data-workspace`*
+
+### Projeto Egressos (SEP-035)
+- **Terceiro Projeto no Seletor (`/projects`)**: Adição do cartão **Egressos** ao lado de **Horizon** e **SRC**, com rotas dedicadas `/egressos` (Controle de Dados e Sincronização GitHub) e `/egressos/tabelas` (Curadoria das 21 Tabelas).
+- **Esquema Relacional Isolado**: Migração `003_egressos_tables.sql` (`egressos_files`, `egressos_rows`, `egressos_meta`) completamente desacoplada das tabelas do Horizon e do SRC.
+- **Importação e Exportação Fiel dos 21 Arquivos JSON (`dados/*.json`)**:
+  - Validação atômica pré-importação exigindo a presença e integridade sintática dos 21 arquivos `.json` do projeto Egressos.
+  - Criação automática de snapshot de segurança (`egressos-pre-import-*.db`) antes de substituir os dados locais.
+  - Exportação *lossless* para pasta local mantendo todos os 21 arquivos `.json` separados, preservando tipos numéricos, booleanos, nulos, objetos escalares (`overview`) e metadados de cabeçalho (*envelope*).
+- **21 Abas Dedicadas + Sub-Abas e CRUD Completo**:
+  - 21 abas primárias mapeadas 1:1 para cada arquivo `.json` e sub-abas automáticas para arquivos com múltiplos arrays internos.
+  - Busca textual instantânea, ordenação por qualquer coluna, paginação com salto direto, criação, edição e exclusão de registros, e editor dedicado para os metadados de cabeçalho (*envelope*) de cada arquivo.
+  - **Propagação Opcional Entre Tabelas (`propagate`)**: Opção explícita no formulário para o curador escolher entre aplicar a edição/exclusão apenas na tabela atual ou propagar automaticamente os campos compartilhados de **Egresso** (`Alumni`) ou **Empresa** (`Company`) nas tabelas relacionadas.
+- **Sincronização GitHub em Nível de Diretório (`dados/`)**:
+  - Download remoto dos 21 arquivos `.json` diretamente do diretório `dados/` no repositório/branch configurado no GitHub.
+  - Upload atômico dos 21 arquivos `.json` em um **único commit Git** via Git Data API (criação dos 21 blobs + tree + commit + atualização da ref).
+- **Compatibilidade Linux / Ambientes Snap**:
+  - Sanitização automática de variáveis de ambiente GSettings/GTK contaminadas pelo VS Code Snap (`sanitize_snap_gtk_env`) no núcleo Rust e no `Makefile`.
+
+---
+
+## v1.4.0 – v1.4.1 (Sincronização GitHub & Pacotes Aninhados)
 *Branch de Origem: `034-github-sync`*
 
 ### Sincronização com GitHub (SEP-034)
