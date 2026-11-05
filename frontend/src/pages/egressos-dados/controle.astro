@@ -1,0 +1,20 @@
+---
+// SEP-037 (FR-005, FR-008..FR-010): página de Controle de Dados (importação/exportação local
+// /home/thiagodeps/egressos-dados, snapshots egressos-dados-* e sincronização GitHub ifesserra-lab/egressos-dados),
+// protegida pelo gate de autenticação especial da organização ifesserra-lab.
+import EgressosDadosDashboard from '../../layouts/EgressosDadosDashboard.astro';
+import EgressosDadosWorkspace from '../../components/EgressosDadosWorkspace.jsx';
+---
+
+<EgressosDadosDashboard>
+  <h1 class="text-2xl font-bold text-slate-900 mb-2">
+    Egressos — Dados: Controle de Dados & Sincronização GitHub
+  </h1>
+  <p class="text-slate-600 mb-6 text-sm">
+    Importe ou exporte os 39 arquivos JSON do repositório local{' '}
+    <code>/home/thiagodeps/egressos-dados</code>, consulte snapshots de segurança e sincronize
+    diretamente com <code>ifesserra-lab/egressos-dados</code>.
+  </p>
+
+  <EgressosDadosWorkspace mode="controle" client:load />
+</EgressosDadosDashboard>

@@ -463,10 +463,154 @@ describe('apiFetch egressos-dados org auth routing', () => {
       organization: 'ifesserra-lab',
       login: 'thiagodeps',
       token_hint: '9f2a',
-      tables_ready: false,
+      tables_ready: true,
     });
     await apiFetch('/egressos-dados/workspace');
     expect(invoke).toHaveBeenCalledWith('egressos_dados_get_workspace');
+  });
+});
+
+// SEP-037: dedicated egressos-dados catalog, CRUD, import/export, snapshots & sync routing (T005)
+describe('apiFetch egressos-dados tables and sync routing', () => {
+  it('routes catalog view to egressos_dados_get_catalog', async () => {
+    invoke.mockResolvedValue({ loaded: true, total_files: 39, files: [] });
+    await apiFetch('/egressos-dados/catalog');
+    expect(invoke).toHaveBeenCalledWith('egressos_dados_get_catalog');
+  });
+
+  it('routes list rows and create row for a fileKey and section', async () => {
+    invoke.mockResolvedValue({ items: [], total: 0 });
+    await apiFetch(
+      '/egressos-dados/files/alunos/rows?section=alunos&limit=50&offset=0&search=demo&sort=nome&order=asc'
+    );
+    expect(invoke).toHaveBeenCalledWith('egressos_dados_list_rows', {
+      fileKey: 'alunos',
+      sectionKey: 'alunos',
+      limit: 50,
+      offset: 0,
+      search: 'demo',
+      sort: 'nome',
+      order: 'asc',
+    });
+
+    invoke.mockResolvedValue({ _row_id: 1, id: 'egresso_demo_1', nome: 'Egresso Demo 1' });
+    await apiFetch('/egressos-dados/files/alunos/rows', {
+      method: 'POST',
+      body: JSON.stringify({
+        section_key: 'alunos',
+        payload: { id: 'egresso_demo_1', nome: 'Egresso Demo 1' },
+      }),
+    });
+    expect(invoke).toHaveBeenCalledWith('egressos_dados_create_row', {
+      fileKey: 'alunos',
+      sectionKey: 'alunos',
+      payload: { id: 'egresso_demo_1', nome: 'Egresso Demo 1' },
+    });
+  });
+
+  it('routes get, update and delete row by numeric _row_id', async () => {
+    invoke.mockResolvedValue({ _row_id: 77, id: 'egresso_demo_1', nome: 'Egresso Demo 1' });
+    await apiFetch('/egressos-dados/rows/77');
+    expect(invoke).toHaveBeenCalledWith('egressos_dados_get_row', { id: 77 });
+
+    invoke.mockResolvedValue({ record: { _row_id: 77 }, propagated_count: 4 });
+    await apiFetch('/egressos-dados/rows/77', {
+      method: 'PUT',
+      body: JSON.stringify({
+        payload: { id: 'egresso_demo_1', cargo_atual: 'Tech Lead' },
+        propagate: true,
+      }),
+    });
+    expect(invoke).toHaveBeenCalledWith('egressos_dados_update_row', {
+      id: 77,
+      payload: { id: 'egresso_demo_1', cargo_atual: 'Tech Lead' },
+      propagate: true,
+    });
+
+    invoke.mockResolvedValue({ deleted: 1, propagated_deleted: 2 });
+    await apiFetch('/egressos-dados/rows/77?propagate=true', { method: 'DELETE' });
+    expect(invoke).toHaveBeenCalledWith('egressos_dados_delete_row', {
+      id: 77,
+      propagate: true,
+    });
+  });
+
+  it('routes envelope get/update, local import/export, snapshots and GitHub sync', async () => {
+    invoke.mockResolvedValue({ total: 103 });
+    await apiFetch('/egressos-dados/files/alunos/envelope');
+    expect(invoke).toHaveBeenCalledWith('egressos_dados_get_envelope', {
+      fileKey: 'alunos',
+    });
+
+    await apiFetch('/egressos-dados/files/alunos/envelope', {
+      method: 'PUT',
+      body: JSON.stringify({ total: 104 }),
+    });
+    expect(invoke).toHaveBeenCalledWith('egressos_dados_update_envelope', {
+      fileKey: 'alunos',
+      payload: { total: 104 },
+    });
+
+    await apiFetch('/egressos-dados/import', {
+      method: 'POST',
+      body: JSON.stringify({ path: '/home/thiagodeps/egressos-dados' }),
+    });
+    expect(invoke).toHaveBeenCalledWith('egressos_dados_import_dir', {
+      path: '/home/thiagodeps/egressos-dados',
+    });
+
+    await apiFetch('/egressos-dados/export', {
+      method: 'POST',
+      body: JSON.stringify({ path: '/home/thiagodeps/egressos-dados' }),
+    });
+    expect(invoke).toHaveBeenCalledWith('egressos_dados_export_dir', {
+      path: '/home/thiagodeps/egressos-dados',
+    });
+
+    await apiFetch('/egressos-dados/snapshots');
+    expect(invoke).toHaveBeenCalledWith('egressos_dados_list_snapshots');
+
+    await apiFetch('/egressos-dados/sync/config');
+    expect(invoke).toHaveBeenCalledWith('egressos_dados_sync_get_config');
+
+    await apiFetch('/egressos-dados/sync/config', {
+      method: 'POST',
+      body: JSON.stringify({
+        repo: 'ifesserra-lab/egressos-dados',
+        branch: 'main',
+        path: '.',
+      }),
+    });
+    expect(invoke).toHaveBeenCalledWith('egressos_dados_sync_set_config', {
+      repo: 'ifesserra-lab/egressos-dados',
+      branch: 'main',
+      path: '.',
+    });
+
+    await apiFetch('/egressos-dados/sync/download', {
+      method: 'POST',
+      body: JSON.stringify({
+        source_url: 'https://github.com/ifesserra-lab/egressos-dados/tree/main',
+      }),
+    });
+    expect(invoke).toHaveBeenCalledWith('egressos_dados_sync_download', {
+      sourceUrl: 'https://github.com/ifesserra-lab/egressos-dados/tree/main',
+      repo: null,
+      branch: null,
+      path: null,
+    });
+
+    await apiFetch('/egressos-dados/sync/upload', {
+      method: 'POST',
+      body: JSON.stringify({
+        confirmOverwrite: true,
+        commitMessage: 'Atualiza 39 datasets',
+      }),
+    });
+    expect(invoke).toHaveBeenCalledWith('egressos_dados_sync_upload', {
+      confirmOverwrite: true,
+      commitMessage: 'Atualiza 39 datasets',
+    });
   });
 });
 

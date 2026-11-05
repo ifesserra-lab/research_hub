@@ -481,7 +481,10 @@ impl GitHubClient {
             });
         }
 
-        let clean_dir = dir.trim_matches('/');
+        let clean_dir = match dir.trim().trim_matches('/') {
+            "." => "",
+            other => other,
+        };
         let blob_url = format!("{}/repos/{}/{}/git/blobs", self.base_url, owner, repo);
         let mut tree_entries = Vec::with_capacity(files.len());
         let mut bytes_sent: u64 = 0;
@@ -659,9 +662,13 @@ impl GitHubClient {
         }
 
         if info.branch_exists {
+            let check_path = match path.trim().trim_matches('/') {
+                "" | "." => "alunos.json",
+                other => other,
+            };
             let contents_url = format!(
                 "{}/repos/{}/{}/contents/{}?ref={}",
-                self.base_url, owner, repo, path, branch
+                self.base_url, owner, repo, check_path, branch
             );
             let resp = self
                 .auth(self.http.get(&contents_url))
@@ -1118,6 +1125,160 @@ pub async fn upload_egressos_dir(
             &files,
             message,
             "egressos",
+            on_progress,
+        )
+        .await?;
+    res.replaced = dest_info.file_exists;
+    Ok(res)
+}
+
+/// Baixa os 39 arquivos `.json` do repositório `egressos-dados` (`alunos.json` na raiz +
+/// 38 arquivos em `data/*.json`), valida-os atomicamente, cria snapshot
+/// `egressos-dados-pre-import-*` e importa na base dedicada (`SEP-037`, `FR-010`).
+pub async fn download_egressos_dados_repo(
+    conn: &mut rusqlite::Connection,
+    data_dir: &Path,
+    source: &crate::sync_domain::EgressosDirSource,
+    client: &GitHubClient,
+    on_progress: OnProgress<'_>,
+) -> Result<crate::egressos_dados_domain::EgressosDadosImportSummary, AppError> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let temp_dir = data_dir
+        .join("sync_tmp")
+        .join(format!("egressos-dados-{stamp}"));
+    std::fs::create_dir_all(temp_dir.join("data"))?;
+
+    let clean_dir = match source.dir.trim().trim_matches('/') {
+        "." => "",
+        other => other,
+    };
+    let mut download_err: Option<AppError> = None;
+
+    for def in crate::egressos_dados_domain::EGRESSOS_DADOS_FILES {
+        let remote_path = if clean_dir.is_empty() {
+            def.relative_path.to_string()
+        } else {
+            format!("{clean_dir}/{}", def.relative_path)
+        };
+        let file_src = NormalizedSource::File {
+            owner: source.owner.clone(),
+            repo: source.repo.clone(),
+            reference: source.reference.clone(),
+            path: remote_path,
+        };
+        match client
+            .download_to_temp(&file_src, "egressos_dados", &temp_dir, on_progress)
+            .await
+        {
+            Ok(downloaded_tmp) => {
+                let canonical_dest = temp_dir.join(def.relative_path);
+                if let Some(parent) = canonical_dest.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                if let Err(e) = std::fs::rename(&downloaded_tmp, &canonical_dest) {
+                    download_err = Some(AppError::Io(e));
+                    break;
+                }
+            }
+            Err(e) => {
+                download_err = Some(e);
+                break;
+            }
+        }
+    }
+
+    if let Some(err) = download_err {
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        return Err(err);
+    }
+
+    on_progress(SyncProgress {
+        operation: "download",
+        project: "egressos_dados".into(),
+        phase: "importing",
+        bytes_done: 0,
+        bytes_total: None,
+    });
+
+    let import_res =
+        crate::egressos_dados_domain::import_dir(conn, &temp_dir, data_dir, |_| {});
+    let _ = std::fs::remove_dir_all(&temp_dir);
+
+    let mut summary = import_res?;
+    summary.path = if clean_dir.is_empty() {
+        format!(
+            "https://github.com/{}/{}/tree/{}",
+            source.owner, source.repo, source.reference
+        )
+    } else {
+        format!(
+            "https://github.com/{}/{}/tree/{}/{}",
+            source.owner, source.repo, source.reference, clean_dir
+        )
+    };
+    Ok(summary)
+}
+
+/// Gera os 39 arquivos `.json` (`alunos.json` + 38 em `data/*.json`) em memória a partir
+/// da base `egressos-dados` atual e envia-os ao GitHub em um único commit atômico (`SEP-037`, `FR-010`).
+pub async fn upload_egressos_dados_repo(
+    conn: &mut rusqlite::Connection,
+    data_dir: &Path,
+    confirm_overwrite: bool,
+    commit_message: Option<&str>,
+    client: &GitHubClient,
+    on_progress: OnProgress<'_>,
+) -> Result<UploadResult, AppError> {
+    crate::sync_domain::check_upload_allowed("egressos_dados")?;
+    let files = crate::egressos_dados_domain::export_files_in_memory(conn)?;
+
+    let file = crate::sync_domain::load_config(data_dir)?;
+    let cfg = crate::sync_domain::effective_project_config("egressos_dados", &file);
+    if cfg.repo.is_empty() || cfg.branch.is_empty() || cfg.path.is_empty() {
+        return Err(AppError::SyncConfig(
+            "Destino não configurado para o projeto Egressos — Dados.".into(),
+        ));
+    }
+    let (owner, repo) = cfg
+        .repo
+        .split_once('/')
+        .ok_or_else(|| {
+            AppError::SyncConfig("Repositório deve estar no formato 'owner/name'.".into())
+        })?;
+
+    let total_bytes: usize = files.iter().map(|(_, b)| b.len()).sum();
+    if total_bytes > client.max_bytes {
+        return Err(AppError::TooLarge {
+            limit_bytes: client.max_bytes,
+        });
+    }
+
+    let dest_info = client
+        .check_destination(owner, repo, &cfg.branch, &cfg.path)
+        .await?;
+    if dest_info.file_exists && !confirm_overwrite {
+        return Err(AppError::Conflict(
+            "O repositório de destino já possui arquivos. Confirme a sobrescrita dos 39 arquivos JSON para prosseguir.".into(),
+        ));
+    }
+
+    let message = commit_message
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+        .unwrap_or("Export dados Egressos-Dados ResearchHub (39 arquivos JSON)");
+
+    let mut res = client
+        .upload_directory(
+            owner,
+            repo,
+            &cfg.branch,
+            &cfg.path,
+            &files,
+            message,
+            "egressos_dados",
             on_progress,
         )
         .await?;

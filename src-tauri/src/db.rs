@@ -10,6 +10,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/001_init.sql"),
     include_str!("../migrations/002_src_tables.sql"),
     include_str!("../migrations/003_egressos_tables.sql"),
+    include_str!("../migrations/004_egressos_dados_tables.sql"),
 ];
 
 pub const DEFAULT_ADMIN_USERNAME: &str = "admin@admin.com";
@@ -116,6 +117,7 @@ mod tests {
     /// SC-001: the schema is verified by querying it, not by reading the file.
     /// SEP-033: +3 tabelas do domínio SRC (src_meta, src_acoes, src_participacoes).
     /// SEP-035: +2 tabelas do domínio Egressos (egressos_files, egressos_rows).
+    /// SEP-037: +2 tabelas do domínio Egressos-Dados (egressos_dados_files, egressos_dados_rows).
     #[test]
     fn migration_creates_nineteen_tables() {
         let conn = open_in_memory().unwrap();
@@ -128,8 +130,70 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            count, 21,
-            "esperado 21 tabelas (15 exportadas + admins + 3 do domínio SRC + 2 do domínio Egressos)"
+            count, 23,
+            "esperado 23 tabelas (15 exportadas + admins + 3 do domínio SRC + 2 do domínio Egressos + 2 do domínio Egressos-Dados)"
+        );
+    }
+
+    /// SEP-037 T002: o domínio Egressos-Dados tem tabelas próprias (`egressos_dados_files` e
+    /// `egressos_dados_rows`) com FK ON DELETE CASCADE, isoladas de Horizon, SRC e Egressos.
+    #[test]
+    fn migration_creates_egressos_dados_domain_tables() {
+        let conn = open_in_memory().unwrap();
+
+        let files = table_columns(&conn, "egressos_dados_files");
+        for col in [
+            "file_key",
+            "kind",
+            "primary_section",
+            "envelope_json",
+            "imported_at",
+        ] {
+            assert!(
+                files.iter().any(|c| c == col),
+                "egressos_dados_files: coluna '{col}' ausente"
+            );
+        }
+
+        let rows = table_columns(&conn, "egressos_dados_rows");
+        for col in [
+            "id",
+            "file_key",
+            "section_key",
+            "ord",
+            "record_key",
+            "search_text",
+            "raw_json",
+        ] {
+            assert!(
+                rows.iter().any(|c| c == col),
+                "egressos_dados_rows: coluna '{col}' ausente"
+            );
+        }
+
+        conn.execute(
+            "INSERT INTO egressos_dados_files (file_key, kind, primary_section, envelope_json) \
+             VALUES ('alunos', 'object_sections', 'alunos', '{}')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO egressos_dados_rows (file_key, section_key, ord, record_key, search_text, raw_json) \
+             VALUES ('alunos', 'alunos', 0, 'barbosa', 'barbosa matheus', '{}')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "DELETE FROM egressos_dados_files WHERE file_key = 'alunos'",
+            [],
+        )
+        .unwrap();
+        let remaining: i64 = conn
+            .query_row("SELECT COUNT(*) FROM egressos_dados_rows", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            remaining, 0,
+            "egressos_dados_rows deve sofrer cascade ao remover egressos_dados_files"
         );
     }
 

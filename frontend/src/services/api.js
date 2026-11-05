@@ -122,6 +122,83 @@ const ROUTES = [
   [/^\/egressos-dados\/workspace$/, 'GET', () =>
     invoke('egressos_dados_get_workspace')],
 
+  // SEP-037: dedicated egressos-dados catalog, CRUD, local import/export, snapshots & GitHub sync
+  [/^\/egressos-dados\/catalog$/, 'GET', () =>
+    invoke('egressos_dados_get_catalog')],
+
+  [/^\/egressos-dados\/files\/([^/?]+)\/rows$/, 'GET', (m, _b, q) =>
+    invoke('egressos_dados_list_rows', {
+      fileKey: m[1],
+      sectionKey: q.get('section') ?? null,
+      limit: q.has('limit') ? Number(q.get('limit')) : null,
+      offset: q.has('offset') ? Number(q.get('offset')) : null,
+      search: q.get('search'),
+      sort: q.get('sort'),
+      order: q.get('order'),
+    })],
+
+  [/^\/egressos-dados\/files\/([^/?]+)\/rows$/, 'POST', (m, b) =>
+    invoke('egressos_dados_create_row', {
+      fileKey: m[1],
+      sectionKey: b?.section_key ?? b?.sectionKey ?? null,
+      payload: b?.payload ?? b ?? {},
+    })],
+
+  [/^\/egressos-dados\/files\/([^/?]+)\/envelope$/, 'GET', (m) =>
+    invoke('egressos_dados_get_envelope', { fileKey: m[1] })],
+
+  [/^\/egressos-dados\/files\/([^/?]+)\/envelope$/, 'PUT', (m, b) =>
+    invoke('egressos_dados_update_envelope', { fileKey: m[1], payload: b ?? {} })],
+
+  [/^\/egressos-dados\/rows\/(\d+)$/, 'GET', (m) =>
+    invoke('egressos_dados_get_row', { id: Number(m[1]) })],
+
+  [/^\/egressos-dados\/rows\/(\d+)$/, 'PUT', (m, b) =>
+    invoke('egressos_dados_update_row', {
+      id: Number(m[1]),
+      payload: b?.payload ?? b ?? {},
+      propagate: b?.propagate ?? false,
+    })],
+
+  [/^\/egressos-dados\/rows\/(\d+)$/, 'DELETE', (m, _b, q) =>
+    invoke('egressos_dados_delete_row', {
+      id: Number(m[1]),
+      propagate: q.get('propagate') === 'true',
+    })],
+
+  [/^\/egressos-dados\/import$/, 'POST', (_m, b) =>
+    invoke('egressos_dados_import_dir', { path: b?.path ?? null })],
+
+  [/^\/egressos-dados\/export$/, 'POST', (_m, b) =>
+    invoke('egressos_dados_export_dir', { path: b?.path ?? null })],
+
+  [/^\/egressos-dados\/snapshots$/, 'GET', () =>
+    invoke('egressos_dados_list_snapshots')],
+
+  [/^\/egressos-dados\/sync\/config$/, 'GET', () =>
+    invoke('egressos_dados_sync_get_config')],
+
+  [/^\/egressos-dados\/sync\/config$/, 'POST', (_m, b) =>
+    invoke('egressos_dados_sync_set_config', {
+      repo: b?.repo ?? '',
+      branch: b?.branch ?? '',
+      path: b?.path ?? '',
+    })],
+
+  [/^\/egressos-dados\/sync\/download$/, 'POST', (_m, b) =>
+    invoke('egressos_dados_sync_download', {
+      sourceUrl: b?.source_url ?? b?.sourceUrl ?? b?.url ?? null,
+      repo: b?.repo ?? null,
+      branch: b?.branch ?? null,
+      path: b?.path ?? null,
+    })],
+
+  [/^\/egressos-dados\/sync\/upload$/, 'POST', (_m, b) =>
+    invoke('egressos_dados_sync_upload', {
+      confirmOverwrite: b?.confirmOverwrite ?? b?.confirm_overwrite ?? true,
+      commitMessage: b?.commitMessage ?? b?.commit_message ?? null,
+    })],
+
   [/^\/auth\/login$/, 'POST', (_m, b) =>
     invoke('login', { email: b.email, password: b.password })],
 
@@ -248,6 +325,13 @@ export function onSyncProgress(callback) {
 // SEP-035: encapsula o listener de egressos-import://progress mantendo a fronteira única.
 export function onEgressosImportProgress(callback) {
   return listen('egressos-import://progress', (event) => {
+    callback(event.payload);
+  });
+}
+
+// SEP-037: encapsula o listener de egressos-dados-import://progress mantendo a fronteira única.
+export function onEgressosDadosImportProgress(callback) {
+  return listen('egressos-dados-import://progress', (event) => {
     callback(event.payload);
   });
 }

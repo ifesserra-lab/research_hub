@@ -1382,3 +1382,199 @@ async fn verify_org_membership_rejeita_nao_membro_pendente_sem_escopo_e_token_in
     assert!(!err_invalid.to_string().contains("ghp_secret_invalid_444"));
 }
 
+// --------------------------------------------------------- SEP-037 (T022, T025)
+
+#[tokio::test]
+async fn download_egressos_dados_repo_baixa_39_jsons_raiz_e_data_e_cria_snapshot() {
+    use research_hub_lib::egressos_dados_domain::{
+        self, write_synthetic_egressos_dados_repo, EGRESSOS_DADOS_FILES,
+    };
+    use research_hub_lib::sync_domain::EgressosDirSource;
+    use research_hub_lib::sync_github::download_egressos_dados_repo;
+
+    let server = MockServer::start().await;
+    let data = tempfile::tempdir().unwrap();
+    let ref_dir = data.path().join("ref_egressos_dados");
+    write_synthetic_egressos_dados_repo(&ref_dir).unwrap();
+
+    for def in EGRESSOS_DADOS_FILES {
+        let body = std::fs::read_to_string(ref_dir.join(def.relative_path)).unwrap();
+        Mock::given(method("GET"))
+            .and(path(format!(
+                "/repos/ifesserra-lab/egressos-dados/contents/{}",
+                def.relative_path
+            )))
+            .respond_with(ResponseTemplate::new(200).set_body_string(body))
+            .mount(&server)
+            .await;
+    }
+
+    let mut conn = db::open_in_memory().unwrap();
+    let src = EgressosDirSource {
+        owner: "ifesserra-lab".into(),
+        repo: "egressos-dados".into(),
+        reference: "main".into(),
+        dir: ".".into(),
+    };
+
+    // 1. Primeiro download popula os 39 arquivos JSON (alunos.json + 38 em data/*.json)
+    let summary1 = download_egressos_dados_repo(
+        &mut conn,
+        data.path(),
+        &src,
+        &client(&server, Some("ghp_token_ifesserra_dados")),
+        no_progress(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(summary1.total_files, 39);
+    assert!(summary1.total_rows >= 39);
+    assert!(summary1.snapshot.is_none());
+
+    // 2. Segundo download cria snapshot egressos-dados-pre-import-*
+    let summary2 = download_egressos_dados_repo(
+        &mut conn,
+        data.path(),
+        &src,
+        &client(&server, Some("ghp_token_ifesserra_dados")),
+        no_progress(),
+    )
+    .await
+    .unwrap();
+    let snap = summary2
+        .snapshot
+        .expect("snapshot esperado no reimport via GitHub");
+    assert!(snap.starts_with("egressos-dados-pre-import-"));
+
+    // 3. Se 1 dos 39 arquivos der 404, aborta sem alterar a base existente (FR-008, FR-010)
+    let broken_server = MockServer::start().await;
+    for def in EGRESSOS_DADOS_FILES {
+        if def.file_key == "vitrine" {
+            Mock::given(method("GET"))
+                .and(path("/repos/ifesserra-lab/egressos-dados/contents/data/vitrine.json"))
+                .respond_with(ResponseTemplate::new(404))
+                .mount(&broken_server)
+                .await;
+        } else {
+            let body = std::fs::read_to_string(ref_dir.join(def.relative_path)).unwrap();
+            Mock::given(method("GET"))
+                .and(path(format!(
+                    "/repos/ifesserra-lab/egressos-dados/contents/{}",
+                    def.relative_path
+                )))
+                .respond_with(ResponseTemplate::new(200).set_body_string(body))
+                .mount(&broken_server)
+                .await;
+        }
+    }
+
+    let err = download_egressos_dados_repo(
+        &mut conn,
+        data.path(),
+        &src,
+        &client(&broken_server, Some("ghp_token_ifesserra_dados")),
+        no_progress(),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(wire(&err)["kind"], "not_found");
+    let cat = egressos_dados_domain::get_catalog(&conn).unwrap();
+    assert_eq!(cat.total_files, 39);
+    assert_eq!(cat.total_rows, summary2.total_rows);
+}
+
+#[tokio::test]
+async fn upload_egressos_dados_repo_publica_39_blobs_em_commit_unico_atomico() {
+    use research_hub_lib::egressos_dados_domain::{self, write_synthetic_egressos_dados_repo};
+    use research_hub_lib::sync_github::upload_egressos_dados_repo;
+
+    let server = MockServer::start().await;
+    let temp = tempfile::tempdir().unwrap();
+    let repo_dir = temp.path().join("egressos_dados_src");
+    write_synthetic_egressos_dados_repo(&repo_dir).unwrap();
+    let mut conn = db::open_in_memory().unwrap();
+    egressos_dados_domain::import_dir(&mut conn, &repo_dir, temp.path(), |_| {}).unwrap();
+
+    // Destination check (default config is ifesserra-lab/egressos-dados, branch main, path .)
+    Mock::given(method("GET"))
+        .and(path("/repos/ifesserra-lab/egressos-dados"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/ifesserra-lab/egressos-dados/git/ref/heads/main"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "object": { "sha": "base_commit_sha_ed" }
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/ifesserra-lab/egressos-dados/contents/alunos.json"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+
+    // Git Data API: 39 blobs + 1 tree + 1 commit + 1 ref patch
+    Mock::given(method("POST"))
+        .and(path("/repos/ifesserra-lab/egressos-dados/git/blobs"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+            "sha": "blob_sha_ed"
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/repos/ifesserra-lab/egressos-dados/git/trees"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+            "sha": "tree_sha_ed"
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/repos/ifesserra-lab/egressos-dados/git/commits"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+            "sha": "commit_ed_999",
+            "html_url": "https://github.com/ifesserra-lab/egressos-dados/commit/commit_ed_999"
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path("/repos/ifesserra-lab/egressos-dados/git/refs/heads/main"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let res = upload_egressos_dados_repo(
+        &mut conn,
+        temp.path(),
+        true,
+        Some("Publicação atômica dos 39 datasets egressos-dados"),
+        &client(&server, Some("ghp_secret_egressos_dados")),
+        no_progress(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(res.commit_sha, "commit_ed_999");
+    assert_eq!(
+        res.html_url,
+        "https://github.com/ifesserra-lab/egressos-dados/commit/commit_ed_999"
+    );
+
+    let requests = server.received_requests().await.unwrap();
+    let blob_posts = requests
+        .iter()
+        .filter(|r| r.url.path() == "/repos/ifesserra-lab/egressos-dados/git/blobs")
+        .count();
+    assert_eq!(blob_posts, 39, "deve criar exatamente 39 blobs para os 39 JSONs");
+
+    let tree_req = requests
+        .iter()
+        .find(|r| r.url.path() == "/repos/ifesserra-lab/egressos-dados/git/trees")
+        .unwrap();
+    let tree_body: serde_json::Value = serde_json::from_slice(&tree_req.body).unwrap();
+    let entries = tree_body["tree"].as_array().unwrap();
+    assert_eq!(entries.len(), 39);
+    assert!(entries.iter().any(|e| e["path"] == "alunos.json"));
+    assert!(entries.iter().any(|e| e["path"] == "data/egressos_perfil.json"));
+}
+

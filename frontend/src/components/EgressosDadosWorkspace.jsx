@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../services/api.js';
+import EgressosDadosTablesPage from './EgressosDadosTablesPage.jsx';
+import EgressosDadosDataControl from './EgressosDadosDataControl.jsx';
 
-export default function EgressosDadosWorkspace() {
+export default function EgressosDadosWorkspace({ mode = '', children = null }) {
   const [loading, setLoading] = useState(true);
   const [authStatus, setAuthStatus] = useState({
     authorized: false,
@@ -36,7 +38,8 @@ export default function EgressosDadosWorkspace() {
       } catch (err) {
         if (!mounted) return;
         setError({
-          message: err?.message || 'Não foi possível verificar o status da aba egressos-dados.',
+          message:
+            err?.message || 'Não foi possível verificar o status da aba egressos-dados.',
           kind: err?.kind || null,
         });
       } finally {
@@ -160,7 +163,8 @@ export default function EgressosDadosWorkspace() {
               <code>https://github.com/orgs/ifesserra-lab/dashboard</code>.
             </li>
             <li>
-              Possuir permissão <code>read:org</code> (caso sua filiação na organização seja privada).
+              Possuir permissão <code>read:org</code> (caso sua filiação na organização seja
+              privada).
             </li>
             <li>
               O token fica apenas em memória durante a sessão atual e nunca é gravado em disco.
@@ -218,12 +222,9 @@ export default function EgressosDadosWorkspace() {
   }
 
   return (
-    <div
-      data-testid="egressos-dados-unlocked-panel"
-      className="space-y-6 max-w-4xl"
-    >
-      <div className="bg-white border border-emerald-200 rounded-xl shadow-sm p-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        <div className="space-y-1">
+    <div data-testid="egressos-dados-unlocked-panel" className="space-y-6">
+      <div className="bg-white border border-emerald-200 rounded-xl shadow-sm p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div className="space-y-0.5">
           <div className="flex flex-wrap items-center gap-2">
             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300">
               Membro verificado: {authStatus.organization || 'ifesserra-lab'}
@@ -232,57 +233,83 @@ export default function EgressosDadosWorkspace() {
               Token em sessão: …{authStatus.token_hint || '****'}
             </span>
           </div>
-          <h2 className="text-lg font-bold text-slate-900">
-            Autenticado como <span className="font-mono text-emerald-700">@{authStatus.login}</span>
+          <h2 className="text-base font-bold text-slate-900">
+            Autenticado como{' '}
+            <span className="font-mono text-emerald-700">@{authStatus.login}</span>
           </h2>
-          <p className="text-xs text-slate-600">
-            Acesso liberado para a área restrita <code>egressos-dados</code> da organização{' '}
-            <code>ifesserra-lab</code>.
-          </p>
         </div>
 
-        <div>
+        <div className="flex flex-wrap items-center gap-2">
+          <a
+            href="/egressos-dados"
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+              mode === 'tables'
+                ? 'bg-slate-900 text-white border-slate-900'
+                : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+            }`}
+          >
+            Tabelas (39 JSONs)
+          </a>
+          <a
+            href="/egressos-dados/controle"
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+              mode === 'controle'
+                ? 'bg-slate-900 text-white border-slate-900'
+                : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+            }`}
+          >
+            Controle de Dados & Sync
+          </a>
           <button
             type="button"
             onClick={handleLogout}
             disabled={submitting}
-            className="px-4 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold rounded-lg transition-colors disabled:opacity-50"
+            className="px-3.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold rounded-lg transition-colors disabled:opacity-50"
           >
             Bloquear aba / Trocar token
           </button>
         </div>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6">
-        <h3 className="text-base font-semibold text-slate-800 mb-2">
-          Tabelas de Dados — Egressos (ifesserra-lab)
-        </h3>
-        <p className="text-sm text-slate-600 mb-4">
-          O controle de acesso exclusivo para membros da organização{' '}
-          <code>ifesserra-lab</code> está ativo. Este painel estrutural está pronto para
-          conectar o repositório GitHub dos JSONs e carregar as tabelas na próxima etapa.
-        </p>
-        <dl className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
-          <div className="bg-slate-50 rounded-lg p-3 border border-slate-100">
-            <dt className="text-xs text-slate-500">Organização Autorizada</dt>
-            <dd className="text-sm font-bold text-slate-800 font-mono">
-              {workspaceInfo?.organization || authStatus.organization}
-            </dd>
-          </div>
-          <div className="bg-slate-50 rounded-lg p-3 border border-slate-100">
-            <dt className="text-xs text-slate-500">Membro Autenticado</dt>
-            <dd className="text-sm font-bold text-emerald-700 font-mono">
-              @{workspaceInfo?.login || authStatus.login}
-            </dd>
-          </div>
-          <div className="bg-slate-50 rounded-lg p-3 border border-slate-100">
-            <dt className="text-xs text-slate-500">Status das Tabelas JSON</dt>
-            <dd className="text-sm font-semibold text-sky-700">
-              Aguardando configuração do repositório
-            </dd>
-          </div>
-        </dl>
-      </div>
+      {children ? (
+        children
+      ) : mode === 'tables' ? (
+        <EgressosDadosTablesPage />
+      ) : mode === 'controle' ? (
+        <EgressosDadosDataControl />
+      ) : (
+        <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6">
+          <h3 className="text-base font-semibold text-slate-800 mb-2">
+            Tabelas de Dados — Egressos (ifesserra-lab)
+          </h3>
+          <p className="text-sm text-slate-600 mb-4">
+            O controle de acesso exclusivo para membros da organização{' '}
+            <code>ifesserra-lab</code> está ativo.
+          </p>
+          <dl className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
+            <div className="bg-slate-50 rounded-lg p-3 border border-slate-100">
+              <dt className="text-xs text-slate-500">Organização Autorizada</dt>
+              <dd className="text-sm font-bold text-slate-800 font-mono">
+                {workspaceInfo?.organization || authStatus.organization}
+              </dd>
+            </div>
+            <div className="bg-slate-50 rounded-lg p-3 border border-slate-100">
+              <dt className="text-xs text-slate-500">Membro Autenticado</dt>
+              <dd className="text-sm font-bold text-emerald-700 font-mono">
+                @{workspaceInfo?.login || authStatus.login}
+              </dd>
+            </div>
+            <div className="bg-slate-50 rounded-lg p-3 border border-slate-100">
+              <dt className="text-xs text-slate-500">Status das Tabelas JSON</dt>
+              <dd className="text-sm font-semibold text-emerald-700">
+                {workspaceInfo?.tables_ready
+                  ? '39 tabelas prontas'
+                  : 'Aguardando configuração do repositório'}
+              </dd>
+            </div>
+          </dl>
+        </div>
+      )}
     </div>
   );
 }

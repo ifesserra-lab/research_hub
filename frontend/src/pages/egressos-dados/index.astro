@@ -1,15 +1,19 @@
 ---
-// SEP-036 (FR-001, FR-002, FR-007): página dedicada da aba egressos-dados,
+// SEP-036 / SEP-037 (FR-001, FR-005, FR-006): página dedicada das 39 tabelas JSON de egressos-dados,
 // exigindo login especial via Token do GitHub como membro ativo de ifesserra-lab.
 import EgressosDadosDashboard from '../../layouts/EgressosDadosDashboard.astro';
 import EgressosDadosWorkspace from '../../components/EgressosDadosWorkspace.jsx';
 ---
 
 <EgressosDadosDashboard>
-  <h1 class="text-2xl font-bold text-slate-900 mb-2">Egressos — Dados (`egressos-dados`)</h1>
-  <p class="text-slate-600 mb-8">
-    Área de trabalho restrita aos membros da organização GitHub <code>ifesserra-lab</code>.
+  <h1 class="text-2xl font-bold text-slate-900 mb-2">
+    Egressos — Dados (39 Tabelas JSON • <code>ifesserra-lab/egressos-dados</code>)
+  </h1>
+  <p class="text-slate-600 mb-6 text-sm">
+    Catálogo completo dos 39 datasets JSON (<code>alunos.json</code> na raiz + 38 arquivos em{' '}
+    <code>data/*.json</code>), restrito aos membros ativos da organização GitHub{' '}
+    <code>ifesserra-lab</code>.
   </p>
 
-  <EgressosDadosWorkspace client:load />
+  <EgressosDadosWorkspace mode="tables" client:load />
 </EgressosDadosDashboard>

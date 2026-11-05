@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod commands;
 pub mod crud;
+pub mod egressos_dados_domain;
 pub mod egressos_domain;
 pub mod export;
 pub mod import;
@@ -135,6 +136,21 @@ pub fn run() {
             commands::egressos_dados_status,
             commands::egressos_dados_logout,
             commands::egressos_dados_get_workspace,
+            commands::egressos_dados_get_catalog,
+            commands::egressos_dados_list_rows,
+            commands::egressos_dados_get_row,
+            commands::egressos_dados_create_row,
+            commands::egressos_dados_update_row,
+            commands::egressos_dados_delete_row,
+            commands::egressos_dados_get_envelope,
+            commands::egressos_dados_update_envelope,
+            commands::egressos_dados_import_dir,
+            commands::egressos_dados_export_dir,
+            commands::egressos_dados_list_snapshots,
+            commands::egressos_dados_sync_get_config,
+            commands::egressos_dados_sync_set_config,
+            commands::egressos_dados_sync_download,
+            commands::egressos_dados_sync_upload,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -154,6 +170,7 @@ pub(crate) const ROUTES: &[&str] = &[
     "/egressos",
     "/egressos/tabelas",
     "/egressos-dados",
+    "/egressos-dados/controle",
     "/dashboard/researchers",
     "/dashboard/articles",
     "/dashboard/groups",
@@ -224,8 +241,8 @@ mod tests {
     fn contagem_de_rotas_bate_com_o_menu_lateral() {
         assert_eq!(
             ROUTES.len(),
-            24,
-            "ROUTES deve cobrir raiz + login + projects + dashboard + 15 entidades + /src + /src/acoes + /egressos + /egressos/tabelas + /egressos-dados"
+            25,
+            "ROUTES deve cobrir raiz + login + projects + dashboard + 15 entidades + /src + /src/acoes + /egressos + /egressos/tabelas + /egressos-dados + /egressos-dados/controle"
         );
     }
 

@@ -1,6 +1,62 @@
 ---
-// SEP-036 (FR-001, FR-007): layout exclusivo da aba egressos-dados,
+// SEP-036 / SEP-037 (FR-001, FR-005): layout exclusivo da aba egressos-dados,
 // protegida pelo login especial por Token do GitHub da organização ifesserra-lab.
+const QUICK_GROUPS = [
+  {
+    label: 'Coorte & Coleta (PII — 12)',
+    items: [
+      { key: 'alunos', label: 'alunos.json (Raiz)' },
+      { key: '_novos_reais', label: '_novos_reais.json' },
+      { key: '_novos_anon5', label: '_novos_anon5.json' },
+      { key: '_novos_anon6', label: '_novos_anon6.json' },
+      { key: 'consolidado_raw', label: 'consolidado_raw.json' },
+      { key: 'fapes_map', label: 'fapes_map.json' },
+      { key: 'fapes_processos', label: 'fapes_processos.json' },
+      { key: 'formandos_map', label: 'formandos_map.json' },
+      { key: 'genero_map', label: 'genero_map.json' },
+      { key: 'horizon_pesquisa', label: 'horizon_pesquisa.json' },
+      { key: 'lattes_orientacoes', label: 'lattes_orientacoes.json' },
+      { key: 'outros_labs', label: 'outros_labs.json' },
+    ],
+  },
+  {
+    label: 'Auxiliares Internos (6)',
+    items: [
+      { key: 'agg_pv', label: 'agg_pv.json' },
+      { key: '_empresas_lista', label: '_empresas_lista.json' },
+      { key: 'por_ano', label: 'por_ano.json' },
+      { key: 'salarios', label: 'salarios.json' },
+      { key: 'series_hist', label: 'series_hist.json' },
+      { key: 'timeline_fomento', label: 'timeline_fomento.json' },
+    ],
+  },
+  {
+    label: 'Publicáveis (21)',
+    items: [
+      { key: 'egressos_perfil', label: 'egressos_perfil.json' },
+      { key: 'vitrine', label: 'vitrine.json' },
+      { key: 'panorama', label: 'panorama.json' },
+      { key: 'analise', label: 'analise.json' },
+      { key: 'consolidado', label: 'consolidado.json' },
+      { key: 'empresas_porte', label: 'empresas_porte.json' },
+      { key: 'empresas_aliases', label: 'empresas_aliases.json' },
+      { key: 'empresas_linkedin_data', label: 'empresas_linkedin_data.json' },
+      { key: 'empresas_linkedin_urls', label: 'empresas_linkedin_urls.json' },
+      { key: 'fapes_fomento', label: 'fapes_fomento.json' },
+      { key: 'impacto', label: 'impacto.json' },
+      { key: 'trajetoria', label: 'trajetoria.json' },
+      { key: 'renda_por_senioridade', label: 'renda_por_senioridade.json' },
+      { key: 'cargos_ao_longo_do_tempo', label: 'cargos_ao_longo_do_tempo.json' },
+      { key: 'codigofonte_2026', label: 'codigofonte_2026.json' },
+      { key: 'codigofonte_historico', label: 'codigofonte_historico.json' },
+      { key: 'salario_minimo', label: 'salario_minimo.json' },
+      { key: 'ibge_series', label: 'ibge_series.json' },
+      { key: 'so_benchmarks', label: 'so_benchmarks.json' },
+      { key: 'recorte_cursos', label: 'recorte_cursos.json' },
+      { key: 'mapa_mundi', label: 'mapa_mundi.json' },
+    ],
+  },
+];
 ---
 <html lang="pt-br">
   <head>
@@ -23,20 +79,41 @@
           <li>
             <a
               href="/egressos-dados"
-              class="block px-3 py-2 rounded-md bg-slate-800 text-white transition-colors font-medium"
+              class="block px-3 py-2 rounded-md text-slate-200 hover:bg-slate-800 hover:text-white transition-colors font-medium"
             >
-              Acesso & Tabelas (ifesserra-lab)
+              Tabelas (39 JSONs)
+            </a>
+          </li>
+          <li>
+            <a
+              href="/egressos-dados/controle"
+              class="block px-3 py-2 rounded-md text-slate-200 hover:bg-slate-800 hover:text-white transition-colors font-medium"
+            >
+              Controle de Dados
             </a>
           </li>
         </ul>
-        <div class="pt-2 border-t border-slate-800 px-3">
-          <p class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
-            Controle de Acesso
-          </p>
-          <p class="text-xs text-slate-400 leading-relaxed">
-            Exclusivo para membros ativos da organização GitHub <code>ifesserra-lab</code>.
-          </p>
-        </div>
+
+        {QUICK_GROUPS.map((group) => (
+          <div class="pt-2 border-t border-slate-800">
+            <p class="px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+              {group.label}
+            </p>
+            <ul class="space-y-0.5 text-xs">
+              {group.items.map((t) => (
+                <li>
+                  <a
+                    href={`/egressos-dados?tab=${t.key}`}
+                    data-egressos-dados-tab={t.key}
+                    class="block px-3 py-1 rounded-md text-slate-300 hover:bg-slate-800 hover:text-white transition-colors truncate font-mono"
+                  >
+                    {t.label}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
       </nav>
       <div class="p-4 border-t border-slate-800 space-y-1">
         <a
@@ -77,6 +154,21 @@
         try { await invoke('logout'); } catch {}
         localStorage.removeItem('token');
         window.location.href = '/login';
+      });
+
+      let unsaved = false;
+      window.addEventListener('egressos-dados:dirty', (ev: Event) => {
+        unsaved = !!(ev as CustomEvent).detail;
+      });
+      document.getElementById('trocar-projeto')?.addEventListener('click', (e) => {
+        if (
+          unsaved &&
+          !window.confirm(
+            'Há alterações não salvas na área egressos-dados. Trocar de projeto agora pode perder o trabalho em andamento. Continuar?'
+          )
+        ) {
+          e.preventDefault();
+        }
       });
     </script>
   </body>
