@@ -131,6 +131,10 @@ pub fn run() {
             commands::github_save_token,
             commands::github_test_token,
             commands::github_remove_token,
+            commands::egressos_dados_login,
+            commands::egressos_dados_status,
+            commands::egressos_dados_logout,
+            commands::egressos_dados_get_workspace,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -149,6 +153,7 @@ pub(crate) const ROUTES: &[&str] = &[
     "/src/acoes",
     "/egressos",
     "/egressos/tabelas",
+    "/egressos-dados",
     "/dashboard/researchers",
     "/dashboard/articles",
     "/dashboard/groups",
@@ -219,8 +224,8 @@ mod tests {
     fn contagem_de_rotas_bate_com_o_menu_lateral() {
         assert_eq!(
             ROUTES.len(),
-            23,
-            "ROUTES deve cobrir raiz + login + projects + dashboard + 15 entidades + /src + /src/acoes + /egressos + /egressos/tabelas"
+            24,
+            "ROUTES deve cobrir raiz + login + projects + dashboard + 15 entidades + /src + /src/acoes + /egressos + /egressos/tabelas + /egressos-dados"
         );
     }
 

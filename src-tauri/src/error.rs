@@ -64,6 +64,10 @@ pub enum AppError {
     #[error("{0}")]
     SyncPolicy(String),
 
+    /// SEP-036 (FR-003..FR-006): acesso restrito à organização GitHub `ifesserra-lab`.
+    #[error("{0}")]
+    OrgUnauthorized(String),
+
     #[error("{0}")]
     Internal(String),
 }
@@ -96,6 +100,7 @@ impl AppError {
             Self::TooLarge { .. } => "too_large",
             Self::SyncConfig(_) => "sync_config",
             Self::SyncPolicy(_) => "sync_policy",
+            Self::OrgUnauthorized(_) => "org_unauthorized",
             Self::Internal(_) => "internal",
         }
     }
@@ -139,6 +144,10 @@ mod tests {
         assert_eq!(AppError::TooLarge { limit_bytes: 1 }.kind(), "too_large");
         assert_eq!(AppError::SyncConfig("sem destino".into()).kind(), "sync_config");
         assert_eq!(AppError::SyncPolicy("src não sobe".into()).kind(), "sync_policy");
+        assert_eq!(
+            AppError::OrgUnauthorized("acesso restrito à organização ifesserra-lab".into()).kind(),
+            "org_unauthorized"
+        );
     }
 
     /// FR-007: mensagens dizem o que houve E o que fazer. FR-006: nunca o token.

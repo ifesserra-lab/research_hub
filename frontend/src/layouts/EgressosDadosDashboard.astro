@@ -1,0 +1,83 @@
+---
+// SEP-036 (FR-001, FR-007): layout exclusivo da aba egressos-dados,
+// protegida pelo login especial por Token do GitHub da organização ifesserra-lab.
+---
+<html lang="pt-br">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>ResearchHub — Egressos Dados (ifesserra-lab)</title>
+  </head>
+  <body class="m-0 font-sans antialiased bg-slate-50 text-slate-900 flex min-h-screen">
+    <div class="w-72 bg-slate-900 text-white flex flex-col min-h-screen shrink-0">
+      <div class="p-6 border-b border-slate-800 flex items-center gap-3">
+        <img src="/logo-icon.svg" alt="ResearchHub Logo" class="w-7 h-7" />
+        <div>
+          <h2 class="text-xl font-bold tracking-tight">ResearchHub</h2>
+          <p class="text-xs text-emerald-400 font-mono">egressos-dados • ifesserra-lab</p>
+        </div>
+      </div>
+      <nav class="flex-1 px-4 py-4 overflow-y-auto space-y-4">
+        <ul class="space-y-1">
+          <li>
+            <a
+              href="/egressos-dados"
+              class="block px-3 py-2 rounded-md bg-slate-800 text-white transition-colors font-medium"
+            >
+              Acesso & Tabelas (ifesserra-lab)
+            </a>
+          </li>
+        </ul>
+        <div class="pt-2 border-t border-slate-800 px-3">
+          <p class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
+            Controle de Acesso
+          </p>
+          <p class="text-xs text-slate-400 leading-relaxed">
+            Exclusivo para membros ativos da organização GitHub <code>ifesserra-lab</code>.
+          </p>
+        </div>
+      </nav>
+      <div class="p-4 border-t border-slate-800 space-y-1">
+        <a
+          href="/projects"
+          id="trocar-projeto"
+          class="block px-3 py-2 rounded-md text-slate-300 hover:bg-slate-800 hover:text-white transition-colors"
+        >
+          ↩ Trocar projeto
+        </a>
+        <a
+          href="#"
+          id="logout"
+          class="block px-3 py-2 rounded-md hover:bg-red-900/50 text-red-400 transition-colors"
+        >
+          Sair
+        </a>
+      </div>
+    </div>
+    <div class="flex-1 p-8 overflow-auto">
+      <div class="max-w-7xl mx-auto">
+        <slot />
+      </div>
+    </div>
+    <script>
+      import { invoke } from '@tauri-apps/api/core';
+      (async () => {
+        try {
+          const { authenticated } = await invoke<{ authenticated: boolean }>('session_status');
+          if (!authenticated) {
+            localStorage.removeItem('token');
+            window.location.replace('/login');
+          }
+        } catch {}
+      })();
+
+      document.getElementById('logout')?.addEventListener('click', async (e) => {
+        e.preventDefault();
+        try { await invoke('logout'); } catch {}
+        localStorage.removeItem('token');
+        window.location.href = '/login';
+      });
+    </script>
+  </body>
+</html>

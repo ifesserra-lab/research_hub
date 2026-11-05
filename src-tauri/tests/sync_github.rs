@@ -1207,3 +1207,178 @@ async fn isolamento_entre_tres_projetos_e_zero_vazamento_de_token_no_egressos() 
         assert!(!serde_json::to_string(&wire(&e)).unwrap().contains(secret));
     }
 }
+
+// --------------------------------------------------- SEP-036 (T005, T017, T024)
+
+#[tokio::test]
+async fn verify_org_membership_autoriza_membro_ativo_e_fallback_publico_ifesserra_lab() {
+    use research_hub_lib::sync_github::REQUIRED_EGRESSOS_DADOS_ORG;
+
+    // 1. Filiação autenticada com state == "active" em /user/memberships/orgs/ifesserra-lab
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/user"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-oauth-scopes", "read:org, repo")
+                .set_body_json(serde_json::json!({ "login": "membro-lab" })),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/user/memberships/orgs/ifesserra-lab"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "state": "active",
+            "role": "member",
+            "organization": { "login": "ifesserra-lab" }
+        })))
+        .mount(&server)
+        .await;
+
+    let info = client(&server, Some("ghp_token_ifesserra_active"))
+        .verify_org_membership(REQUIRED_EGRESSOS_DADOS_ORG)
+        .await
+        .unwrap();
+    assert_eq!(info.login, "membro-lab");
+    assert_eq!(info.organization, "ifesserra-lab");
+    assert_eq!(info.state, "active");
+
+    // 2. Fallback público: /user/memberships/orgs/ifesserra-lab retorna 403 (sem read:org),
+    // mas /orgs/ifesserra-lab/members/membro-publico retorna 204 No Content
+    let fallback_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/user"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-oauth-scopes", "repo")
+                .set_body_json(serde_json::json!({ "login": "membro-publico" })),
+        )
+        .mount(&fallback_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/user/memberships/orgs/ifesserra-lab"))
+        .respond_with(ResponseTemplate::new(403).set_body_json(serde_json::json!({
+            "message": "Resource not accessible by personal access token"
+        })))
+        .mount(&fallback_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/orgs/ifesserra-lab/members/membro-publico"))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&fallback_server)
+        .await;
+
+    let info_pub = client(&fallback_server, Some("ghp_token_public_member"))
+        .verify_org_membership(REQUIRED_EGRESSOS_DADOS_ORG)
+        .await
+        .unwrap();
+    assert_eq!(info_pub.login, "membro-publico");
+    assert_eq!(info_pub.organization, "ifesserra-lab");
+    assert_eq!(info_pub.state, "active");
+}
+
+#[tokio::test]
+async fn verify_org_membership_rejeita_nao_membro_pendente_sem_escopo_e_token_invalido_sem_vazar_segredo() {
+    use research_hub_lib::sync_github::REQUIRED_EGRESSOS_DADOS_ORG;
+
+    // 1. Usuário válido no GitHub, mas NÃO pertence à organização ifesserra-lab (404)
+    let non_member_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/user"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-oauth-scopes", "read:org")
+                .set_body_json(serde_json::json!({ "login": "externo-user" })),
+        )
+        .mount(&non_member_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/user/memberships/orgs/ifesserra-lab"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&non_member_server)
+        .await;
+
+    let err_non_member = client(&non_member_server, Some("ghp_secret_non_member_111"))
+        .verify_org_membership(REQUIRED_EGRESSOS_DADOS_ORG)
+        .await
+        .unwrap_err();
+    assert_eq!(wire(&err_non_member)["kind"], "org_unauthorized");
+    assert!(err_non_member.to_string().contains("@externo-user"));
+    assert!(err_non_member.to_string().contains("ifesserra-lab"));
+    assert!(!err_non_member.to_string().contains("ghp_secret_non_member_111"));
+
+    // 2. Convite pendente na organização ifesserra-lab (state == "pending")
+    let pending_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/user"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-oauth-scopes", "read:org")
+                .set_body_json(serde_json::json!({ "login": "convidado-lab" })),
+        )
+        .mount(&pending_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/user/memberships/orgs/ifesserra-lab"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "state": "pending",
+            "organization": { "login": "ifesserra-lab" }
+        })))
+        .mount(&pending_server)
+        .await;
+
+    let err_pending = client(&pending_server, Some("ghp_secret_pending_222"))
+        .verify_org_membership(REQUIRED_EGRESSOS_DADOS_ORG)
+        .await
+        .unwrap_err();
+    assert_eq!(wire(&err_pending)["kind"], "org_unauthorized");
+    assert!(err_pending.to_string().contains("convite pendente"));
+    assert!(!err_pending.to_string().contains("ghp_secret_pending_222"));
+
+    // 3. Token sem escopo read:org (403) e não listado publicamente (404)
+    let no_scope_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/user"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-oauth-scopes", "repo")
+                .set_body_json(serde_json::json!({ "login": "membro-privado" })),
+        )
+        .mount(&no_scope_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/user/memberships/orgs/ifesserra-lab"))
+        .respond_with(ResponseTemplate::new(403))
+        .mount(&no_scope_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/orgs/ifesserra-lab/members/membro-privado"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&no_scope_server)
+        .await;
+
+    let err_scope = client(&no_scope_server, Some("ghp_secret_no_scope_333"))
+        .verify_org_membership(REQUIRED_EGRESSOS_DADOS_ORG)
+        .await
+        .unwrap_err();
+    assert_eq!(wire(&err_scope)["kind"], "org_unauthorized");
+    assert!(err_scope.to_string().contains("read:org"));
+    assert!(!err_scope.to_string().contains("ghp_secret_no_scope_333"));
+
+    // 4. Token inválido ou expirado (401 em /user)
+    let invalid_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/user"))
+        .respond_with(ResponseTemplate::new(401))
+        .mount(&invalid_server)
+        .await;
+
+    let err_invalid = client(&invalid_server, Some("ghp_secret_invalid_444"))
+        .verify_org_membership(REQUIRED_EGRESSOS_DADOS_ORG)
+        .await
+        .unwrap_err();
+    assert_eq!(wire(&err_invalid)["kind"], "github_api");
+    assert!(err_invalid.to_string().contains("inválido ou revogado"));
+    assert!(!err_invalid.to_string().contains("ghp_secret_invalid_444"));
+}
+

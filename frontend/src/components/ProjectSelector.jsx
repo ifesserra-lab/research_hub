@@ -20,6 +20,13 @@ export const DEFAULT_PROJECTS = [
       'Painel de carreira e renda dos egressos do IFES Campus Serra (21 tabelas JSON da pasta dados/)',
     href: '/egressos',
   },
+  {
+    id: 'egressos-dados',
+    title: 'Egressos — Dados',
+    description:
+      'Área restrita à organização GitHub ifesserra-lab (acesso exclusivo via GitHub Token)',
+    href: '/egressos-dados',
+  },
 ];
 
 /**
@@ -57,7 +64,7 @@ export default function ProjectSelector({
   };
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl w-full px-4">
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 max-w-6xl w-full px-4">
       {projects.map((project) => (
         <button
           key={project.id}

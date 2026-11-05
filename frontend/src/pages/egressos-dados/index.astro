@@ -1,0 +1,15 @@
+---
+// SEP-036 (FR-001, FR-002, FR-007): página dedicada da aba egressos-dados,
+// exigindo login especial via Token do GitHub como membro ativo de ifesserra-lab.
+import EgressosDadosDashboard from '../../layouts/EgressosDadosDashboard.astro';
+import EgressosDadosWorkspace from '../../components/EgressosDadosWorkspace.jsx';
+---
+
+<EgressosDadosDashboard>
+  <h1 class="text-2xl font-bold text-slate-900 mb-2">Egressos — Dados (`egressos-dados`)</h1>
+  <p class="text-slate-600 mb-8">
+    Área de trabalho restrita aos membros da organização GitHub <code>ifesserra-lab</code>.
+  </p>
+
+  <EgressosDadosWorkspace client:load />
+</EgressosDadosDashboard>

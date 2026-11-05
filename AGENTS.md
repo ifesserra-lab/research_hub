@@ -18,6 +18,6 @@ See `.specify/memory/constitution.md` for the binding rules and
 `docs/estudo-migracao-rust-tauri.md` for the reasoning behind the architecture.
 
 <!-- SPECKIT START -->
-Active Plan: `specs/029-user-registration/plan.md`
+Active Plan: `specs/036-egressos-github-org-auth/plan.md`
 <!-- SPECKIT END -->
 

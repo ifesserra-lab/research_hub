@@ -109,6 +109,19 @@ const ROUTES = [
       propagate: q.get('propagate') === 'true',
     })],
 
+  // SEP-036: dedicated egressos-dados GitHub organization (`ifesserra-lab`) auth routes
+  [/^\/egressos-dados\/auth\/status$/, 'GET', () =>
+    invoke('egressos_dados_status')],
+
+  [/^\/egressos-dados\/auth\/login$/, 'POST', (_m, b) =>
+    invoke('egressos_dados_login', { token: b?.token ?? '' })],
+
+  [/^\/egressos-dados\/auth\/logout$/, 'DELETE', () =>
+    invoke('egressos_dados_logout')],
+
+  [/^\/egressos-dados\/workspace$/, 'GET', () =>
+    invoke('egressos_dados_get_workspace')],
+
   [/^\/auth\/login$/, 'POST', (_m, b) =>
     invoke('login', { email: b.email, password: b.password })],
 

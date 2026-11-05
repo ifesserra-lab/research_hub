@@ -780,6 +780,74 @@ pub fn github_remove_token(
     Ok(())
 }
 
+// ------------------------------------------- Egressos-Dados Org Auth (SEP-036)
+
+#[derive(serde::Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct EgressosDadosWorkspaceView {
+    pub organization: String,
+    pub login: String,
+    pub token_hint: String,
+    pub tables_ready: bool,
+}
+
+#[tauri::command(async)]
+pub async fn egressos_dados_login(
+    state: State<'_, AppState>,
+    token: String,
+) -> Result<crate::state::EgressosDadosAuthStatus, AppError> {
+    state.require_session()?;
+    let token = token.trim().to_string();
+    if token.is_empty() {
+        let _ = state.close_egressos_dados_session();
+        return Err(AppError::Validation(
+            "Informe o Token de Acesso Pessoal do GitHub.".into(),
+        ));
+    }
+
+    let client = crate::sync_github::GitHubClient::new(
+        crate::sync_github::GITHUB_API,
+        Some(token.clone()),
+    );
+    match client
+        .verify_org_membership(crate::state::REQUIRED_EGRESSOS_DADOS_ORG)
+        .await
+    {
+        Ok(info) => state.open_egressos_dados_session(&info.login, &info.organization, &token),
+        Err(err) => {
+            let _ = state.close_egressos_dados_session();
+            Err(err)
+        }
+    }
+}
+
+#[tauri::command(async)]
+pub fn egressos_dados_status(
+    state: State<'_, AppState>,
+) -> Result<crate::state::EgressosDadosAuthStatus, AppError> {
+    state.current_egressos_dados_status()
+}
+
+#[tauri::command(async)]
+pub fn egressos_dados_logout(
+    state: State<'_, AppState>,
+) -> Result<crate::state::EgressosDadosAuthStatus, AppError> {
+    state.require_session()?;
+    state.close_egressos_dados_session()
+}
+
+#[tauri::command(async)]
+pub fn egressos_dados_get_workspace(
+    state: State<'_, AppState>,
+) -> Result<EgressosDadosWorkspaceView, AppError> {
+    let auth = state.require_egressos_dados_session()?;
+    Ok(EgressosDadosWorkspaceView {
+        organization: auth.organization,
+        login: auth.login,
+        token_hint: auth.token_hint,
+        tables_ready: false,
+    })
+}
+
 
 // ----------------------------------------------------------- special ops (020)
 

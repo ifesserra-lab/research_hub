@@ -416,3 +416,58 @@ describe('apiFetch Egressos routing', () => {
   });
 });
 
+// SEP-036: dedicated egressos-dados GitHub organization auth routing (T006)
+describe('apiFetch egressos-dados org auth routing', () => {
+  it('routes auth status check to egressos_dados_status', async () => {
+    invoke.mockResolvedValue({
+      authorized: false,
+      login: null,
+      organization: 'ifesserra-lab',
+      token_hint: null,
+    });
+    const status = await apiFetch('/egressos-dados/auth/status');
+    expect(invoke).toHaveBeenCalledWith('egressos_dados_status');
+    expect(status.organization).toBe('ifesserra-lab');
+  });
+
+  it('routes special login with GitHub token to egressos_dados_login', async () => {
+    invoke.mockResolvedValue({
+      authorized: true,
+      login: 'thiagodeps',
+      organization: 'ifesserra-lab',
+      token_hint: '9f2a',
+    });
+    const res = await apiFetch('/egressos-dados/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ token: 'ghp_123456789f2a' }),
+    });
+    expect(invoke).toHaveBeenCalledWith('egressos_dados_login', {
+      token: 'ghp_123456789f2a',
+    });
+    expect(res.authorized).toBe(true);
+  });
+
+  it('routes special logout to egressos_dados_logout', async () => {
+    invoke.mockResolvedValue({
+      authorized: false,
+      login: null,
+      organization: 'ifesserra-lab',
+      token_hint: null,
+    });
+    await apiFetch('/egressos-dados/auth/logout', { method: 'DELETE' });
+    expect(invoke).toHaveBeenCalledWith('egressos_dados_logout');
+  });
+
+  it('routes workspace metadata check to egressos_dados_get_workspace', async () => {
+    invoke.mockResolvedValue({
+      organization: 'ifesserra-lab',
+      login: 'thiagodeps',
+      token_hint: '9f2a',
+      tables_ready: false,
+    });
+    await apiFetch('/egressos-dados/workspace');
+    expect(invoke).toHaveBeenCalledWith('egressos_dados_get_workspace');
+  });
+});
+
+

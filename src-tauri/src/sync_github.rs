@@ -17,6 +17,9 @@ use std::path::{Path, PathBuf};
 /// Base URL padrão da API pública do GitHub.
 pub const GITHUB_API: &str = "https://api.github.com";
 
+/// Organização obrigatória para desbloqueio da aba `egressos-dados` (SEP-036).
+pub use crate::state::REQUIRED_EGRESSOS_DADOS_ORG;
+
 /// Callback de progresso; o comando converte em evento Tauri `sync://progress`
 /// (research R6). O módulo em si não conhece Tauri.
 pub type OnProgress<'a> = &'a (dyn Fn(SyncProgress) + Send + Sync);
@@ -51,6 +54,14 @@ pub struct TokenInfo {
     pub login: String,
     pub scopes: String,
     pub valid: bool,
+}
+
+/// Resultado da verificação de membresia ativa em organização GitHub (SEP-036, FR-003).
+#[derive(serde::Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct OrgMembershipInfo {
+    pub login: String,
+    pub organization: String,
+    pub state: String,
 }
 
 impl GitHubClient {
@@ -717,6 +728,119 @@ impl GitHubClient {
             scopes,
             valid: true,
         })
+    }
+
+    /// Verifica se o token autentica um usuário válido no GitHub E se esse usuário
+    /// é membro ativo (`state == "active"`) da organização `org` (ex.: `ifesserra-lab`).
+    ///
+    /// Fluxo (SEP-036, FR-003..FR-005, Clarificação Q3):
+    /// 1. `GET /user` -> identifica `login` e `scopes` (401 -> token inválido/expirado).
+    /// 2. `GET /user/memberships/orgs/{org}` -> verifica filiação autenticada (pública ou privada):
+    ///    - `200 OK` com `state == "active"` -> autorizado.
+    ///    - `200 OK` com `state == "pending"` -> recusado (convite pendente).
+    ///    - `403 Forbidden` (sem escopo `read:org`) -> tenta fallback público `GET /orgs/{org}/members/{login}`:
+    ///      - `204 No Content` -> autorizado (membro público ativo).
+    ///      - Caso contrário -> recusado orientando habilitar o escopo `read:org`.
+    ///    - `404 Not Found` -> tenta fallback público `GET /orgs/{org}/members/{login}` caso o token
+    ///      não declare `read:org`/`admin:org`; se não for `204`, recusa informando que `@{login}`
+    ///      não pertence à organização `{org}`.
+    pub async fn verify_org_membership(&self, org: &str) -> Result<OrgMembershipInfo, AppError> {
+        let token_info = self.test_token().await?;
+        let login = token_info.login;
+        if login.trim().is_empty() {
+            return Err(AppError::GithubApi {
+                status: 401,
+                hint: "Não foi possível identificar o usuário do token no GitHub.".into(),
+            });
+        }
+
+        let membership_url = format!("{}/user/memberships/orgs/{}", self.base_url, org);
+        let resp = self
+            .auth(self.http.get(&membership_url))
+            .send()
+            .await
+            .map_err(network_error)?;
+
+        match resp.status().as_u16() {
+            200 => {
+                let body: serde_json::Value = resp
+                    .json()
+                    .await
+                    .map_err(|e| AppError::Network(format!("resposta ilegível do GitHub: {e}")))?;
+                let state = body
+                    .get("state")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                if state == "active" {
+                    Ok(OrgMembershipInfo {
+                        login,
+                        organization: org.to_string(),
+                        state: "active".into(),
+                    })
+                } else if state == "pending" {
+                    Err(AppError::OrgUnauthorized(format!(
+                        "Acesso negado: a conta '@{login}' possui um convite pendente na organização '{org}'. Aceite o convite em https://github.com/orgs/{org} antes de acessar egressos-dados."
+                    )))
+                } else {
+                    Err(AppError::OrgUnauthorized(format!(
+                        "Acesso negado: a conta '@{login}' não possui participação ativa na organização '{org}'."
+                    )))
+                }
+            }
+            403 => {
+                // Token sem escopo read:org: tenta verificar membresia pública como fallback
+                if self.check_public_org_member(org, &login).await? {
+                    return Ok(OrgMembershipInfo {
+                        login,
+                        organization: org.to_string(),
+                        state: "active".into(),
+                    });
+                }
+                Err(AppError::OrgUnauthorized(format!(
+                    "Não foi possível verificar sua filiação privada na organização '{org}' para '@{login}'. Habilite a permissão 'read:org' no seu Token do GitHub (ou torne sua participação pública em https://github.com/orgs/{org}/people)."
+                )))
+            }
+            404 => {
+                let has_org_scope = token_info
+                    .scopes
+                    .split(',')
+                    .map(|s| s.trim())
+                    .any(|s| s == "read:org" || s == "admin:org" || s == "write:org" || s == "user");
+
+                if !has_org_scope && self.check_public_org_member(org, &login).await? {
+                    return Ok(OrgMembershipInfo {
+                        login,
+                        organization: org.to_string(),
+                        state: "active".into(),
+                    });
+                }
+
+                Err(AppError::OrgUnauthorized(format!(
+                    "Acesso negado: a conta GitHub '@{login}' não pertence à organização '{org}'. Somente membros ativos de https://github.com/orgs/{org}/dashboard têm acesso à aba egressos-dados."
+                )))
+            }
+            401 => Err(AppError::GithubApi {
+                status: 401,
+                hint: "token inválido ou revogado; informe um token atualizado".into(),
+            }),
+            status => Err(AppError::GithubApi {
+                status,
+                hint: format!(
+                    "o GitHub respondeu {status} ao verificar a organização '{org}'; tente novamente"
+                ),
+            }),
+        }
+    }
+
+    async fn check_public_org_member(&self, org: &str, login: &str) -> Result<bool, AppError> {
+        let public_url = format!("{}/orgs/{}/members/{}", self.base_url, org, login);
+        let resp = self
+            .auth(self.http.get(&public_url))
+            .send()
+            .await
+            .map_err(network_error)?;
+        Ok(resp.status().as_u16() == 204)
     }
 }
 
