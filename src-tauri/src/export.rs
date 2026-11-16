@@ -552,6 +552,15 @@ mod tests {
         assert_eq!(campuses[0]["name"], "Vila Velha");
         assert!(campuses[0]["campus"].is_null(), "nenhum campus aninhado pode voltar");
 
+        // SEP-040: researchers and students must preserve the 22nd column `linkedin_url`
+        let researchers: Json = serde_json::from_slice(&entry(&out, "researchers_canonical.json")).unwrap();
+        assert_eq!(researchers.as_array().unwrap().len(), 18334);
+        assert!(researchers[0].as_object().unwrap().contains_key("linkedin_url"));
+
+        let students: Json = serde_json::from_slice(&entry(&out, "students_canonical.json")).unwrap();
+        assert_eq!(students.as_array().unwrap().len(), 11717);
+        assert!(students[0].as_object().unwrap().contains_key("linkedin_url"));
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 

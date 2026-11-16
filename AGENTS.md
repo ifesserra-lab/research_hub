@@ -18,6 +18,6 @@ See `.specify/memory/constitution.md` for the binding rules and
 `docs/estudo-migracao-rust-tauri.md` for the reasoning behind the architecture.
 
 <!-- SPECKIT START -->
-Active Plan: `specs/039-horizon-v2-canonical-tab/plan.md`
+Active Plan: `specs/041-filters-custom-charts/plan.md`
 <!-- SPECKIT END -->
 

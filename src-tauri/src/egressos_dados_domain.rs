@@ -1950,7 +1950,22 @@ pub fn list_rows(
     sort: Option<&str>,
     order: Option<&str>,
 ) -> Result<EgressosDadosRowPage, AppError> {
+    list_rows_filtered(conn, file_key, section_key, limit, offset, search, sort, order, None)
+}
+
+pub fn list_rows_filtered(
+    conn: &Connection,
+    file_key: &str,
+    section_key: Option<&str>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+    search: Option<&str>,
+    sort: Option<&str>,
+    order: Option<&str>,
+    filters: Option<&str>,
+) -> Result<EgressosDadosRowPage, AppError> {
     let def = by_file_key(file_key)?;
+    let filter_spec = crate::analytics::parse_filter_spec(filters);
     let sec = section_key
         .map(str::trim)
         .filter(|s| !s.is_empty())
@@ -1990,7 +2005,11 @@ pub fn list_rows(
                 continue;
             }
         }
-        filtered.push(row_to_record(id, rk, &raw)?);
+        let rec = row_to_record(id, rk, &raw)?;
+        if !filter_spec.is_empty() && !crate::analytics::record_matches_filter_spec(&rec, &filter_spec) {
+            continue;
+        }
+        filtered.push(rec);
     }
 
     if let Some(sort_col) = sort.map(str::trim).filter(|s| !s.is_empty()) {
@@ -2838,6 +2857,22 @@ mod tests {
         let created = create_row(&conn, "alunos", Some("alunos"), &create_payload).unwrap();
         assert_eq!(created.get("id").and_then(|v| v.as_str()), Some("novo_aluno"));
         let created_row_id = created.get("_row_id").and_then(|v| v.as_i64()).unwrap();
+
+        // Testa list_rows_filtered (SEP-041 T006)
+        let filter_bsi = r#"{"logic":"and","rules":[{"field":"curso","operator":"equals","value":"bsi"}]}"#;
+        let filtered_bsi = list_rows_filtered(
+            &conn,
+            "alunos",
+            Some("alunos"),
+            Some(50),
+            Some(0),
+            None,
+            None,
+            None,
+            Some(filter_bsi),
+        )
+        .unwrap();
+        assert!(filtered_bsi.total >= 1);
 
         // Exclui o novo aluno
         let del = delete_row(&mut conn, created_row_id, false).unwrap();

@@ -3,6 +3,9 @@ import { apiFetch } from '../services/api.js';
 import EntityTable from './EntityTable.jsx';
 import EntityForm from './EntityForm.jsx';
 import ParticipacoesEditor from './ParticipacoesEditor.jsx';
+import TableAnalyticsPanel from './TableAnalyticsPanel.jsx';
+import FilterBuilderBar, { serializeFilterSpec } from './FilterBuilderBar.jsx';
+import CustomChartModal from './CustomChartModal.jsx';
 
 // SEP-033 / US3 (FR-010/FR-011/FR-013): curadoria das ações no caminho
 // dedicado /src — mesmo ritual do EntityPage do Horizon, porém sempre nos
@@ -32,12 +35,16 @@ export default function SrcAcoesPage() {
   const [search, setSearch] = useState('');
   const [sortCol, setSortCol] = useState(null);
   const [sortOrder, setSortOrder] = useState('asc');
+  const [filterSpec, setFilterSpec] = useState({ logic: 'and', rules: [] });
+  const [chartModalOpen, setChartModalOpen] = useState(false);
+  const [forceOpenAnalytics, setForceOpenAnalytics] = useState(0);
   const [editingItem, setEditingItem] = useState(null);
   const [vinculo, setVinculo] = useState({ text: '', resolvido: true });
   const [message, setMessage] = useState(null);
   const [dirty, setDirty] = useState(false);
 
   const totalPages = Math.max(1, Math.ceil(total / LIMIT));
+  const serializedFilters = serializeFilterSpec(filterSpec);
 
   const loadData = async () => {
     try {
@@ -45,6 +52,7 @@ export default function SrcAcoesPage() {
       let url = `/src/acoes?limit=${LIMIT}&offset=${offset}`;
       if (search) url += `&search=${encodeURIComponent(search)}`;
       if (sortCol) url += `&sort=${encodeURIComponent(sortCol)}&order=${sortOrder}`;
+      if (serializedFilters) url += `&filters=${encodeURIComponent(serializedFilters)}`;
       const res = await apiFetch(url);
       setData(res.items || []);
       setTotal(res.total || 0);
@@ -56,7 +64,7 @@ export default function SrcAcoesPage() {
   useEffect(() => {
     loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, search, sortCol, sortOrder]);
+  }, [page, search, sortCol, sortOrder, serializedFilters]);
 
   // US1-5 / FR-003: o estado do formulário ativo é anunciado para os layouts —
   // é isso que a seleção de projeto e o menu consultam antes de navegar.
@@ -214,6 +222,34 @@ export default function SrcAcoesPage() {
           )}
         </div>
       )}
+
+      <TableAnalyticsPanel
+        endpoint="/src/analytics"
+        label="Ações e Participações do SRC"
+        externalFilterSpec={filterSpec}
+        fallbackColumns={FIELDS}
+        forceOpenSignal={forceOpenAnalytics}
+      />
+
+      <FilterBuilderBar
+        columns={FIELDS}
+        filterSpec={filterSpec}
+        onChange={(nextSpec) => {
+          setFilterSpec(nextSpec);
+          setPage(0);
+        }}
+        onCreateChart={() => setChartModalOpen(true)}
+      />
+
+      <CustomChartModal
+        open={chartModalOpen}
+        scope="src"
+        defaultEntity="acoes"
+        fallbackColumns={FIELDS}
+        initialFilterSpec={filterSpec}
+        onClose={() => setChartModalOpen(false)}
+        onCreated={() => setForceOpenAnalytics((v) => v + 1)}
+      />
 
       <EntityTable
         entityName="Ações do SRC"

@@ -2,12 +2,16 @@
 import HorizonDashboard from '../../layouts/HorizonDashboard.astro';
 import DataControlCenter from '../../components/DataControlCenter.jsx';
 import SyncPanel from '../../components/SyncPanel.jsx';
+import AnalyticsDashboard from '../../components/AnalyticsDashboard.jsx';
 ---
 
 <HorizonDashboard>
-  <h1 class="text-2xl font-bold text-slate-900 mb-6">Central de Curadoria de Dados — Horizon</h1>
-  <p class="text-slate-600">Bem-vindo ao espaço de curadoria do novo pacote canônico Horizon. Selecione uma entidade no menu lateral para visualizar e corrigir seus registros.</p>
+  <h1 class="text-2xl font-bold text-slate-900 mb-2">Central de Curadoria e Analytics — Horizon</h1>
+  <p class="text-slate-600 mb-6">
+    Bem-vindo ao espaço de curadoria e inteligência analítica da versão final do pacote canônico Horizon. Consulte os gráficos abaixo ou selecione uma entidade no menu lateral.
+  </p>
 
+  <AnalyticsDashboard client:load endpoint="/horizon-v2/analytics" />
   <DataControlCenter client:load apiPrefix="/horizon-v2" />
   <SyncPanel client:load project="horizon_v2" allowUpload={true} />
 </HorizonDashboard>

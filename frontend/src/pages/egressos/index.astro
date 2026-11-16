@@ -4,6 +4,7 @@
 import EgressosDashboard from '../../layouts/EgressosDashboard.astro';
 import EgressosDataControl from '../../components/EgressosDataControl.jsx';
 import SyncPanel from '../../components/SyncPanel.jsx';
+import AnalyticsDashboard from '../../components/AnalyticsDashboard.jsx';
 ---
 
 <EgressosDashboard>
@@ -34,6 +35,7 @@ import SyncPanel from '../../components/SyncPanel.jsx';
     </dl>
   </div>
 
+  <AnalyticsDashboard client:load endpoint="/egressos/analytics" />
   <EgressosDataControl client:load />
   <SyncPanel client:load project="egressos" allowUpload={true} />
 

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import ProjectStatusBadge from './ProjectStatusBadge';
 
 const VALID_ENTITY_ROUTES = new Set([
   'researchers',
@@ -177,7 +178,12 @@ export default function EntityForm({
 
           return (
             <div key={f.name}>
-              <label className="block mb-1 text-sm font-medium text-slate-700">{f.label}</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-sm font-medium text-slate-700">{f.label}</label>
+                {f.name === 'status' && (
+                  <ProjectStatusBadge status={data[f.name]} showRaw />
+                )}
+              </div>
               <input
                 type={f.type || 'text'}
                 value={idLocked ? '' : data[f.name] || ''}

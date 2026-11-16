@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../services/api.js';
 import EgressosDadosTablesPage from './EgressosDadosTablesPage.jsx';
 import EgressosDadosDataControl from './EgressosDadosDataControl.jsx';
+import AnalyticsDashboard from './AnalyticsDashboard.jsx';
 
 export default function EgressosDadosWorkspace({ mode = '', children = null }) {
   const [loading, setLoading] = useState(true);
@@ -276,7 +277,10 @@ export default function EgressosDadosWorkspace({ mode = '', children = null }) {
       ) : mode === 'tables' ? (
         <EgressosDadosTablesPage />
       ) : mode === 'controle' ? (
-        <EgressosDadosDataControl />
+        <>
+          <AnalyticsDashboard endpoint="/egressos-dados/analytics" />
+          <EgressosDadosDataControl />
+        </>
       ) : (
         <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6">
           <h3 className="text-base font-semibold text-slate-800 mb-2">

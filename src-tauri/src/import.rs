@@ -695,12 +695,12 @@ mod tests {
         }
 
         let expected: &[(&str, i64)] = &[
-            ("researchers", 18429), ("students", 11799), ("articles", 8057),
-            ("initiatives", 15505), ("knowledge_areas", 1563),
-            ("professional_activities", 9557), ("research_productions", 3729),
+            ("researchers", 18334), ("students", 11717), ("articles", 8079),
+            ("initiatives", 15546), ("knowledge_areas", 1563),
+            ("professional_activities", 9560), ("research_productions", 3732),
             ("research_groups", 353), ("proficiencies", 794), ("advisorships", 190),
             ("organizations", 440), ("awards", 183), ("campuses", 23),
-            ("fellowships", 21), ("languages", 11),
+            ("fellowships", 20), ("languages", 11),
         ];
 
         let (mut conn, dir) = fixture();

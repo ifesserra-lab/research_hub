@@ -9,6 +9,7 @@ use crate::state::AppState;
 use tauri::State;
 
 #[tauri::command(async)]
+#[allow(clippy::too_many_arguments)]
 pub fn list_entities(
     state: State<'_, AppState>,
     entity: String,
@@ -17,10 +18,11 @@ pub fn list_entities(
     search: Option<String>,
     sort: Option<String>,
     order: Option<String>,
+    filters: Option<String>,
 ) -> Result<Page, AppError> {
     state.require_session()?;
     let conn = state.db()?;
-    crud::list(
+    crud::list_filtered(
         &conn,
         &entity,
         limit,
@@ -28,6 +30,7 @@ pub fn list_entities(
         search.as_deref(),
         sort.as_deref(),
         order.as_deref(),
+        filters.as_deref(),
     )
 }
 
@@ -74,6 +77,7 @@ pub fn delete_entity(state: State<'_, AppState>, entity: String, id: i64) -> Res
 // ------------------------------------------------ Horizon v2 CRUD (SEP-039)
 
 #[tauri::command(async)]
+#[allow(clippy::too_many_arguments)]
 pub fn hv2_list_entities(
     state: State<'_, AppState>,
     entity: String,
@@ -82,10 +86,11 @@ pub fn hv2_list_entities(
     search: Option<String>,
     sort: Option<String>,
     order: Option<String>,
+    filters: Option<String>,
 ) -> Result<Page, AppError> {
     state.require_session()?;
     let conn = state.db()?;
-    crud::hv2_list(
+    crud::hv2_list_filtered(
         &conn,
         &entity,
         limit,
@@ -93,6 +98,7 @@ pub fn hv2_list_entities(
         search.as_deref(),
         sort.as_deref(),
         order.as_deref(),
+        filters.as_deref(),
     )
 }
 
@@ -443,16 +449,18 @@ pub fn src_list_acoes(
     search: Option<String>,
     sort: Option<String>,
     order: Option<String>,
+    filters: Option<String>,
 ) -> Result<crate::src_domain::SrcAcaoPage, AppError> {
     state.require_session()?;
     let conn = state.db()?;
-    crate::src_domain::list_acoes(
+    crate::src_domain::list_acoes_filtered(
         &conn,
         limit,
         offset,
         search.as_deref(),
         sort.as_deref(),
         order.as_deref(),
+        filters.as_deref(),
     )
 }
 
@@ -617,6 +625,7 @@ pub fn egressos_get_catalog(
 }
 
 #[tauri::command(async)]
+#[allow(clippy::too_many_arguments)]
 pub fn egressos_list_rows(
     state: State<'_, AppState>,
     file_key: String,
@@ -626,10 +635,11 @@ pub fn egressos_list_rows(
     search: Option<String>,
     sort: Option<String>,
     order: Option<String>,
+    filters: Option<String>,
 ) -> Result<crate::egressos_domain::EgressosRowPage, AppError> {
     state.require_session()?;
     let conn = state.db()?;
-    crate::egressos_domain::list_rows(
+    crate::egressos_domain::list_rows_filtered(
         &conn,
         &file_key,
         section_key.as_deref(),
@@ -638,6 +648,7 @@ pub fn egressos_list_rows(
         search.as_deref(),
         sort.as_deref(),
         order.as_deref(),
+        filters.as_deref(),
     )
 }
 
@@ -1082,6 +1093,7 @@ pub fn egressos_dados_get_catalog(
 }
 
 #[tauri::command(async)]
+#[allow(clippy::too_many_arguments)]
 pub fn egressos_dados_list_rows(
     state: State<'_, AppState>,
     file_key: String,
@@ -1091,10 +1103,11 @@ pub fn egressos_dados_list_rows(
     search: Option<String>,
     sort: Option<String>,
     order: Option<String>,
+    filters: Option<String>,
 ) -> Result<crate::egressos_dados_domain::EgressosDadosRowPage, AppError> {
     state.require_egressos_dados_session()?;
     let conn = state.db()?;
-    crate::egressos_dados_domain::list_rows(
+    crate::egressos_dados_domain::list_rows_filtered(
         &conn,
         &file_key,
         section_key.as_deref(),
@@ -1103,6 +1116,7 @@ pub fn egressos_dados_list_rows(
         search.as_deref(),
         sort.as_deref(),
         order.as_deref(),
+        filters.as_deref(),
     )
 }
 
@@ -1492,4 +1506,110 @@ pub fn session_status(state: State<'_, AppState>) -> Result<SessionStatus, AppEr
         authenticated: s.is_some(),
         username: s.map(|s| s.username),
     })
+}
+
+// --------------------------------------------------- SEP-040: Analytics & Status
+
+#[tauri::command(async)]
+pub fn projects_status(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::analytics::ProjectWorkspaceStatus>, AppError> {
+    state.require_session()?;
+    let conn = state.db()?;
+    crate::analytics::compute_projects_status(&conn)
+}
+
+#[tauri::command(async)]
+pub fn hv2_get_analytics(
+    state: State<'_, AppState>,
+    entity: Option<String>,
+    filters: Option<String>,
+) -> Result<crate::analytics::DashboardPayload, AppError> {
+    state.require_session()?;
+    let conn = state.db()?;
+    crate::analytics::horizon_analytics_filtered(&conn, true, entity.as_deref(), filters.as_deref())
+}
+
+#[tauri::command(async)]
+pub fn get_horizon_analytics(
+    state: State<'_, AppState>,
+    entity: Option<String>,
+    filters: Option<String>,
+) -> Result<crate::analytics::DashboardPayload, AppError> {
+    state.require_session()?;
+    let conn = state.db()?;
+    crate::analytics::horizon_analytics_filtered(&conn, false, entity.as_deref(), filters.as_deref())
+}
+
+#[tauri::command(async)]
+pub fn src_get_analytics(
+    state: State<'_, AppState>,
+    filters: Option<String>,
+) -> Result<crate::analytics::DashboardPayload, AppError> {
+    state.require_session()?;
+    let conn = state.db()?;
+    crate::analytics::src_analytics_filtered(&conn, filters.as_deref())
+}
+
+#[tauri::command(async)]
+pub fn egressos_get_analytics(
+    state: State<'_, AppState>,
+    file_key: Option<String>,
+    filters: Option<String>,
+) -> Result<crate::analytics::DashboardPayload, AppError> {
+    state.require_session()?;
+    let conn = state.db()?;
+    crate::analytics::egressos_analytics_filtered(&conn, file_key.as_deref(), filters.as_deref())
+}
+
+#[tauri::command(async)]
+pub fn egressos_dados_get_analytics(
+    state: State<'_, AppState>,
+    file_key: Option<String>,
+    filters: Option<String>,
+) -> Result<crate::analytics::DashboardPayload, AppError> {
+    state.require_egressos_dados_session()?;
+    let conn = state.db()?;
+    crate::analytics::egressos_dados_analytics_filtered(&conn, file_key.as_deref(), filters.as_deref())
+}
+
+// --------------------------------------------------- SEP-041: Custom Charts
+
+#[tauri::command(async)]
+pub fn create_custom_chart(
+    state: State<'_, AppState>,
+    payload: crate::analytics::NewCustomChartInput,
+) -> Result<crate::analytics::CustomDashboardChart, AppError> {
+    if payload.scope.trim() == "egressos-dados" {
+        state.require_egressos_dados_session()?;
+    } else {
+        state.require_session()?;
+    }
+    let conn = state.db()?;
+    crate::analytics::create_custom_chart(&conn, &payload)
+}
+
+#[tauri::command(async)]
+pub fn list_custom_charts(
+    state: State<'_, AppState>,
+    scope: String,
+    entity: Option<String>,
+) -> Result<Vec<crate::analytics::CustomDashboardChart>, AppError> {
+    if scope.trim() == "egressos-dados" {
+        state.require_egressos_dados_session()?;
+    } else {
+        state.require_session()?;
+    }
+    let conn = state.db()?;
+    crate::analytics::list_custom_charts(&conn, &scope, entity.as_deref())
+}
+
+#[tauri::command(async)]
+pub fn delete_custom_chart(
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<(), AppError> {
+    state.require_session()?;
+    let conn = state.db()?;
+    crate::analytics::delete_custom_chart(&conn, id)
 }

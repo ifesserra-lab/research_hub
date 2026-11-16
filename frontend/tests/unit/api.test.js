@@ -756,4 +756,184 @@ describe('apiFetch Horizon v2 routing', () => {
   });
 });
 
+// SEP-040: projects status & multi-domain analytics routing (T013, T021)
+describe('apiFetch SEP-040 analytics and projects status routing', () => {
+  it('routes GET /projects/status to projects_status before generic entity routes', async () => {
+    invoke.mockResolvedValue([{ id: 'horizon-v2', active: true, total_rows: 70545 }]);
+    const res = await apiFetch('/projects/status');
+    expect(invoke).toHaveBeenCalledWith('projects_status');
+    expect(res[0].id).toBe('horizon-v2');
+  });
+
+  it('routes GET /horizon-v2/analytics and GET /analytics with optional entity query parameter', async () => {
+    invoke.mockResolvedValue({ scope: 'horizon-v2', loaded: true });
+    await apiFetch('/horizon-v2/analytics');
+    expect(invoke).toHaveBeenCalledWith('hv2_get_analytics', { entity: null });
+
+    await apiFetch('/horizon-v2/analytics?entity=initiatives');
+    expect(invoke).toHaveBeenCalledWith('hv2_get_analytics', { entity: 'initiatives' });
+
+    await apiFetch('/analytics');
+    expect(invoke).toHaveBeenCalledWith('get_horizon_analytics', { entity: null });
+
+    await apiFetch('/analytics?entity=researchers');
+    expect(invoke).toHaveBeenCalledWith('get_horizon_analytics', { entity: 'researchers' });
+  });
+
+  it('routes GET /src/analytics, GET /egressos/analytics and GET /egressos-dados/analytics', async () => {
+    invoke.mockResolvedValue({ scope: 'src', loaded: true });
+    await apiFetch('/src/analytics');
+    expect(invoke).toHaveBeenCalledWith('src_get_analytics');
+
+    await apiFetch('/egressos/analytics');
+    expect(invoke).toHaveBeenCalledWith('egressos_get_analytics', { fileKey: null });
+
+    await apiFetch('/egressos/analytics?file=egressos_perfil');
+    expect(invoke).toHaveBeenCalledWith('egressos_get_analytics', { fileKey: 'egressos_perfil' });
+
+    await apiFetch('/egressos-dados/analytics');
+    expect(invoke).toHaveBeenCalledWith('egressos_dados_get_analytics', { fileKey: null });
+
+    await apiFetch('/egressos-dados/analytics?file=alunos');
+    expect(invoke).toHaveBeenCalledWith('egressos_dados_get_analytics', { fileKey: 'alunos' });
+  });
+});
+
+// SEP-041: filters parameter forwarding on tables & dashboards + custom charts CRUD (T007, T016, T020)
+describe('apiFetch SEP-041 filters and custom charts routing', () => {
+  it('forwards serialized filters query parameter to table listing commands across all 5 workspaces', async () => {
+    invoke.mockResolvedValue({ items: [], total: 0 });
+    const spec = JSON.stringify({
+      logic: 'and',
+      rules: [{ field: 'status', operator: 'equals', value: 'Active' }],
+    });
+    const encoded = encodeURIComponent(spec);
+
+    await apiFetch(`/horizon-v2/initiatives?limit=50&offset=0&filters=${encoded}`);
+    expect(invoke).toHaveBeenCalledWith('hv2_list_entities', {
+      entity: 'initiatives',
+      limit: 50,
+      offset: 0,
+      search: null,
+      sort: null,
+      order: null,
+      filters: spec,
+    });
+
+    await apiFetch(`/initiatives?limit=50&offset=0&filters=${encoded}`);
+    expect(invoke).toHaveBeenCalledWith('list_entities', {
+      entity: 'initiatives',
+      limit: 50,
+      offset: 0,
+      search: null,
+      sort: null,
+      order: null,
+      filters: spec,
+    });
+
+    await apiFetch(`/src/acoes?limit=50&offset=0&filters=${encoded}`);
+    expect(invoke).toHaveBeenCalledWith('src_list_acoes', {
+      limit: 50,
+      offset: 0,
+      search: null,
+      sort: null,
+      order: null,
+      filters: spec,
+    });
+
+    await apiFetch(`/egressos/files/egressos_perfil/rows?section=perfis&filters=${encoded}`);
+    expect(invoke).toHaveBeenCalledWith('egressos_list_rows', {
+      fileKey: 'egressos_perfil',
+      sectionKey: 'perfis',
+      limit: null,
+      offset: null,
+      search: null,
+      sort: null,
+      order: null,
+      filters: spec,
+    });
+
+    await apiFetch(`/egressos-dados/files/alunos/rows?section=alunos&filters=${encoded}`);
+    expect(invoke).toHaveBeenCalledWith('egressos_dados_list_rows', {
+      fileKey: 'alunos',
+      sectionKey: 'alunos',
+      limit: null,
+      offset: null,
+      search: null,
+      sort: null,
+      order: null,
+      filters: spec,
+    });
+  });
+
+  it('forwards serialized filters query parameter to all 5 analytics commands', async () => {
+    invoke.mockResolvedValue({ scope: 'horizon-v2', loaded: true });
+    const spec = JSON.stringify({
+      logic: 'or',
+      rules: [{ field: 'research_groups', operator: 'contains', value: 'Conexos' }],
+    });
+    const encoded = encodeURIComponent(spec);
+
+    await apiFetch(`/horizon-v2/analytics?entity=initiatives&filters=${encoded}`);
+    expect(invoke).toHaveBeenCalledWith('hv2_get_analytics', {
+      entity: 'initiatives',
+      filters: spec,
+    });
+
+    await apiFetch(`/analytics?filters=${encoded}`);
+    expect(invoke).toHaveBeenCalledWith('get_horizon_analytics', {
+      entity: null,
+      filters: spec,
+    });
+
+    await apiFetch(`/src/analytics?filters=${encoded}`);
+    expect(invoke).toHaveBeenCalledWith('src_get_analytics', {
+      filters: spec,
+    });
+
+    await apiFetch(`/egressos/analytics?file=egressos_perfil&filters=${encoded}`);
+    expect(invoke).toHaveBeenCalledWith('egressos_get_analytics', {
+      fileKey: 'egressos_perfil',
+      filters: spec,
+    });
+
+    await apiFetch(`/egressos-dados/analytics?file=alunos&filters=${encoded}`);
+    expect(invoke).toHaveBeenCalledWith('egressos_dados_get_analytics', {
+      fileKey: 'alunos',
+      filters: spec,
+    });
+  });
+
+  it('routes POST /custom-charts, GET /custom-charts and DELETE /custom-charts/:id before generic entity routes', async () => {
+    const payload = {
+      scope: 'horizon-v2',
+      entity: 'initiatives',
+      title: 'Iniciativas por Status',
+      kind: 'bar',
+      group_by: 'status',
+      metric: 'count',
+      metric_field: null,
+      filter_spec: { logic: 'and', rules: [] },
+    };
+    invoke.mockResolvedValue({ id: 10, ...payload });
+    await apiFetch('/custom-charts', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    expect(invoke).toHaveBeenCalledWith('create_custom_chart', { payload });
+
+    invoke.mockResolvedValue([{ id: 10, ...payload }]);
+    await apiFetch('/custom-charts?scope=horizon-v2&entity=initiatives');
+    expect(invoke).toHaveBeenCalledWith('list_custom_charts', {
+      scope: 'horizon-v2',
+      entity: 'initiatives',
+    });
+
+    invoke.mockResolvedValue(null);
+    await apiFetch('/custom-charts/10', { method: 'DELETE' });
+    expect(invoke).toHaveBeenCalledWith('delete_custom_chart', { id: 10 });
+  });
+});
+
+
 

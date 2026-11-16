@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../services/api';
 import EntityTable from './EntityTable';
 import EntityForm from './EntityForm';
+import TableAnalyticsPanel from './TableAnalyticsPanel';
+import FilterBuilderBar, { serializeFilterSpec } from './FilterBuilderBar';
+import CustomChartModal from './CustomChartModal';
 
 export default function EntityPage({ entity, columns, fields, apiPrefix = '', basePath = '/dashboard' }) {
   const [data, setData] = useState([]);
@@ -11,10 +14,14 @@ export default function EntityPage({ entity, columns, fields, apiPrefix = '', ba
   const [search, setSearch] = useState("");
   const [sortCol, setSortCol] = useState(null);
   const [sortOrder, setSortOrder] = useState("asc");
+  const [filterSpec, setFilterSpec] = useState({ logic: 'and', rules: [] });
+  const [chartModalOpen, setChartModalOpen] = useState(false);
+  const [forceOpenAnalytics, setForceOpenAnalytics] = useState(0);
   const [editingItem, setEditingItem] = useState(null);
   const limit = 50;
   
   const totalPages = Math.max(1, Math.ceil(total / limit));
+  const serializedFilters = serializeFilterSpec(filterSpec);
 
   const loadData = async () => {
     try {
@@ -22,6 +29,7 @@ export default function EntityPage({ entity, columns, fields, apiPrefix = '', ba
       let url = `${apiPrefix}/${entity}?limit=${limit}&offset=${offset}`;
       if (search) url += `&search=${encodeURIComponent(search)}`;
       if (sortCol) url += `&sort=${encodeURIComponent(sortCol)}&order=${sortOrder}`;
+      if (serializedFilters) url += `&filters=${encodeURIComponent(serializedFilters)}`;
       
       const res = await apiFetch(url, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }});
       setData(res.items || []);
@@ -31,7 +39,7 @@ export default function EntityPage({ entity, columns, fields, apiPrefix = '', ba
     }
   };
 
-  useEffect(() => { loadData(); }, [entity, apiPrefix, page, search, sortCol, sortOrder]);
+  useEffect(() => { loadData(); }, [entity, apiPrefix, page, search, sortCol, sortOrder, serializedFilters]);
 
   useEffect(() => {
     setPageInput((page + 1).toString());
@@ -169,6 +177,34 @@ export default function EntityPage({ entity, columns, fields, apiPrefix = '', ba
           onCancel={() => setEditingItem(null)} 
         />
       )}
+
+      <TableAnalyticsPanel
+        endpoint={`${apiPrefix}/analytics?entity=${encodeURIComponent(entity)}`}
+        label={entity}
+        externalFilterSpec={filterSpec}
+        fallbackColumns={fields?.length ? fields : columns}
+        forceOpenSignal={forceOpenAnalytics}
+      />
+
+      <FilterBuilderBar
+        columns={fields?.length ? fields : columns}
+        filterSpec={filterSpec}
+        onChange={(nextSpec) => {
+          setFilterSpec(nextSpec);
+          setPage(0);
+        }}
+        onCreateChart={() => setChartModalOpen(true)}
+      />
+
+      <CustomChartModal
+        open={chartModalOpen}
+        scope={apiPrefix === '/horizon-v2' ? 'horizon-v2' : 'horizon'}
+        defaultEntity={entity}
+        fallbackColumns={fields?.length ? fields : columns}
+        initialFilterSpec={filterSpec}
+        onClose={() => setChartModalOpen(false)}
+        onCreated={() => setForceOpenAnalytics((v) => v + 1)}
+      />
 
       <EntityTable 
         entityName={entity}

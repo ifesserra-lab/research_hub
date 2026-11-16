@@ -110,4 +110,26 @@ describe('ProjectSelector', () => {
     fireEvent.click(screen.getByRole('button', { name: /SRC/i }));
     expect(confirmSpy).not.toHaveBeenCalled();
   });
+
+  it('displays active/inactive status badge on each project card when statuses are provided (SEP-040 FR-004)', () => {
+    const statuses = {
+      'horizon-v2': {
+        id: 'horizon-v2',
+        active: true,
+        total_rows: 70545,
+        active_projects: 1943,
+        status_label: 'Ativo • 70.545 registros (1.943 projetos ativos)',
+      },
+      horizon: {
+        id: 'horizon',
+        active: false,
+        total_rows: 0,
+        active_projects: 0,
+        status_label: 'Inativo • Sem dados carregados',
+      },
+    };
+    render(<ProjectSelector projects={projects} statuses={statuses} onSelect={() => {}} />);
+    expect(screen.getByText(/Ativo • 70\.545 registros/i)).toBeDefined();
+    expect(screen.getByText(/Inativo • Sem dados carregados/i)).toBeDefined();
+  });
 });

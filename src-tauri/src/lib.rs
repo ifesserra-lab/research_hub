@@ -1,3 +1,4 @@
+pub mod analytics;
 pub mod auth;
 pub mod commands;
 pub mod crud;
@@ -28,10 +29,14 @@ pub fn sanitize_snap_gtk_env() {
         "GSETTINGS_SCHEMA_DIR",
         "GTK_PATH",
         "GIO_MODULE_DIR",
+        "GIO_EXTRA_MODULES",
         "GDK_PIXBUF_MODULE_FILE",
         "GDK_PIXBUF_MODULEDIR",
         "GTK_EXE_PREFIX",
         "GTK_DATA_PREFIX",
+        "GTK_IM_MODULE_FILE",
+        "GTK_IM_MODULE",
+        "LOCPATH",
     ] {
         if let Ok(val) = std::env::var(var) {
             if val.contains("/snap/") {
@@ -43,7 +48,7 @@ pub fn sanitize_snap_gtk_env() {
     if let Ok(xdg) = std::env::var("XDG_DATA_DIRS") {
         let cleaned: Vec<&str> = xdg
             .split(':')
-            .filter(|p| !p.is_empty() && !p.starts_with("/snap/"))
+            .filter(|p| !p.is_empty() && !p.contains("/snap/"))
             .collect();
         if cleaned.is_empty() {
             std::env::set_var(
@@ -60,6 +65,10 @@ pub fn sanitize_snap_gtk_env() {
         && std::env::var("GSETTINGS_SCHEMA_DIR").is_err()
     {
         std::env::set_var("GSETTINGS_SCHEMA_DIR", host_schemas);
+    }
+
+    if std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
 }
 
@@ -162,6 +171,15 @@ pub fn run() {
             commands::egressos_dados_sync_list_branches,
             commands::egressos_dados_sync_download,
             commands::egressos_dados_sync_upload,
+            commands::projects_status,
+            commands::hv2_get_analytics,
+            commands::get_horizon_analytics,
+            commands::src_get_analytics,
+            commands::egressos_get_analytics,
+            commands::egressos_dados_get_analytics,
+            commands::create_custom_chart,
+            commands::list_custom_charts,
+            commands::delete_custom_chart,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -293,11 +311,15 @@ mod tests {
     fn sanitize_snap_gtk_env_removes_snap_paths_from_xdg_and_gsettings() {
         std::env::set_var(
             "XDG_DATA_DIRS",
-            "/snap/code/200/usr/share:/usr/share/ubuntu:/usr/share",
+            "/home/user/snap/code/272/.local/share:/snap/code/200/usr/share:/usr/share/ubuntu:/usr/share",
         );
         std::env::set_var(
             "GSETTINGS_SCHEMA_DIR",
             "/snap/code/200/usr/share/glib-2.0/schemas",
+        );
+        std::env::set_var(
+            "GTK_IM_MODULE_FILE",
+            "/home/user/snap/code/common/.cache/immodules/immodules.cache",
         );
         super::sanitize_snap_gtk_env();
 
@@ -308,6 +330,8 @@ mod tests {
         if let Ok(gs) = std::env::var("GSETTINGS_SCHEMA_DIR") {
             assert!(!gs.contains("/snap/"));
         }
+        assert!(std::env::var("GTK_IM_MODULE_FILE").is_err());
+        assert_eq!(std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").as_deref(), Ok("1"));
     }
 }
 

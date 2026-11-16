@@ -9,7 +9,7 @@ import EntityPage from '../../components/EntityPage.jsx';
     entity="researchers"
     apiPrefix="/horizon-v2"
     basePath="/horizon"
-    columns={['id', 'name', 'classification', 'initiatives', 'research_groups', 'knowledge_areas', 'academic_education', 'articles', 'advisorships', 'campus']}
+    columns={['id', 'name', 'classification', 'linkedin_url', 'initiatives', 'research_groups', 'knowledge_areas', 'academic_education', 'articles', 'advisorships', 'campus']}
     fields={[
       { name: 'id', label: 'ID', type: 'number' },
       { name: 'name', label: 'Nome', required: true },
@@ -17,6 +17,7 @@ import EntityPage from '../../components/EntityPage.jsx';
       { name: 'birthday', label: 'Data de Nascimento' },
       { name: 'cnpq_url', label: 'URL CNPq' },
       { name: 'google_scholar_url', label: 'URL Google Scholar' },
+      { name: 'linkedin_url', label: 'LinkedIn URL' },
       { name: 'resume', label: 'Resumo' },
       { name: 'citation_names', label: 'Nomes de Citação' },
       { name: 'classification', label: 'Classificação' },

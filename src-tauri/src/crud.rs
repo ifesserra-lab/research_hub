@@ -90,9 +90,11 @@ fn list_with_def(
     search: Option<&str>,
     sort: Option<&str>,
     order: Option<&str>,
+    filters: Option<&str>,
 ) -> Result<Page, AppError> {
     let limit = limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let offset = offset.unwrap_or(0).max(0);
+    let filter_spec = crate::analytics::parse_filter_spec(filters);
 
     // Trimmed before classification (030 research D6); empty after trim means
     // no filter at all, as before.
@@ -145,6 +147,29 @@ fn list_with_def(
     };
 
     let table = def.table;
+    let cols = def.columns.join(", ");
+
+    if !filter_spec.is_empty() {
+        let sql = format!("SELECT {cols} FROM {table}{where_sql}{order_sql}");
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(bind.iter()), |r| {
+                row_to_record(r, def.columns)
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let filtered: Vec<Record> = rows
+            .into_iter()
+            .filter(|rec| crate::analytics::record_matches_filter_spec(rec, &filter_spec))
+            .collect();
+        let total = filtered.len() as i64;
+        let items = filtered
+            .into_iter()
+            .skip(offset as usize)
+            .take(limit as usize)
+            .collect();
+        return Ok(Page { items, total });
+    }
+
     let total: i64 = if bind.is_empty() {
         conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))?
     } else {
@@ -155,7 +180,6 @@ fn list_with_def(
         )?
     };
 
-    let cols = def.columns.join(", ");
     let sql = format!("SELECT {cols} FROM {table}{where_sql}{order_sql} LIMIT ? OFFSET ?");
     let mut stmt = conn.prepare(&sql)?;
 
@@ -277,8 +301,21 @@ pub fn list(
     sort: Option<&str>,
     order: Option<&str>,
 ) -> Result<Page, AppError> {
+    list_filtered(conn, route, limit, offset, search, sort, order, None)
+}
+
+pub fn list_filtered(
+    conn: &Connection,
+    route: &str,
+    limit: Option<i64>,
+    offset: Option<i64>,
+    search: Option<&str>,
+    sort: Option<&str>,
+    order: Option<&str>,
+    filters: Option<&str>,
+) -> Result<Page, AppError> {
     let def = registry::by_route(route)?;
-    list_with_def(conn, def, limit, offset, search, sort, order)
+    list_with_def(conn, def, limit, offset, search, sort, order, filters)
 }
 
 pub fn get(conn: &Connection, route: &str, id: i64) -> Result<Record, AppError> {
@@ -317,8 +354,21 @@ pub fn hv2_list(
     sort: Option<&str>,
     order: Option<&str>,
 ) -> Result<Page, AppError> {
+    hv2_list_filtered(conn, route, limit, offset, search, sort, order, None)
+}
+
+pub fn hv2_list_filtered(
+    conn: &Connection,
+    route: &str,
+    limit: Option<i64>,
+    offset: Option<i64>,
+    search: Option<&str>,
+    sort: Option<&str>,
+    order: Option<&str>,
+    filters: Option<&str>,
+) -> Result<Page, AppError> {
     let def = registry::by_horizon_v2_route(route)?;
-    list_with_def(conn, def, limit, offset, search, sort, order)
+    list_with_def(conn, def, limit, offset, search, sort, order, filters)
 }
 
 pub fn hv2_get(conn: &Connection, route: &str, id: i64) -> Result<Record, AppError> {
@@ -749,5 +799,39 @@ mod tests {
         // Legacy campus must still exist untouched.
         let legacy = get(&conn, "campuses", 1).unwrap();
         assert_eq!(legacy["name"], json!("Serra Legado"));
+    }
+
+    /// SEP-041 T005: `list_filtered` and `hv2_list_filtered` apply `FilterSpec` (`AND` / `OR`)
+    /// on both scalar and structured JSON columns and update `total`.
+    #[test]
+    fn list_filtered_applies_and_or_rules_across_horizon_and_legacy() {
+        let conn = db::open_in_memory().unwrap();
+        hv2_create(
+            &conn,
+            "initiatives",
+            &rec(json!({"id": 1, "name": "IA Serra", "status": "Active", "campus": "[{\"id\":1,\"name\":\"Serra\"}]"})),
+        )
+        .unwrap();
+        hv2_create(
+            &conn,
+            "initiatives",
+            &rec(json!({"id": 2, "name": "Robótica Serra", "status": "Concluded", "campus": "[{\"id\":1,\"name\":\"Serra\"}]"})),
+        )
+        .unwrap();
+        hv2_create(
+            &conn,
+            "initiatives",
+            &rec(json!({"id": 3, "name": "Química Vitória", "status": "Active", "campus": "[{\"id\":2,\"name\":\"Vitória\"}]"})),
+        )
+        .unwrap();
+
+        let and_json = r#"{"logic":"and","rules":[{"field":"status","operator":"equals","value":"Active"},{"field":"campus","operator":"contains","value":"Serra"}]}"#;
+        let p_and = hv2_list_filtered(&conn, "initiatives", None, None, None, None, None, Some(and_json)).unwrap();
+        assert_eq!(p_and.total, 1);
+        assert_eq!(p_and.items[0]["name"], json!("IA Serra"));
+
+        let or_json = r#"{"logic":"or","rules":[{"field":"status","operator":"equals","value":"Concluded"},{"field":"campus","operator":"contains","value":"Vitória"}]}"#;
+        let p_or = hv2_list_filtered(&conn, "initiatives", None, None, None, None, None, Some(or_json)).unwrap();
+        assert_eq!(p_or.total, 2);
     }
 }

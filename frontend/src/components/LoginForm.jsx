@@ -23,7 +23,7 @@ export default function LoginForm() {
       });
       if (response.access_token) {
         localStorage.setItem('token', response.access_token);
-        window.location.href = '/dashboard';
+        window.location.href = '/projects';
       }
     } catch (err) {
       setError(err.message || 'Erro ao realizar login.');

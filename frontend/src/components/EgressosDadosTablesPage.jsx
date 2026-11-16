@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiFetch } from '../services/api.js';
+import TableAnalyticsPanel from './TableAnalyticsPanel.jsx';
+import FilterBuilderBar, { serializeFilterSpec } from './FilterBuilderBar.jsx';
+import CustomChartModal from './CustomChartModal.jsx';
 
 function formatCellValue(val) {
   if (val === null || val === undefined) return '—';
@@ -73,6 +76,9 @@ export default function EgressosDadosTablesPage() {
   const [appliedSearch, setAppliedSearch] = useState('');
   const [sortCol, setSortCol] = useState('');
   const [sortOrder, setSortOrder] = useState('asc');
+  const [filterSpec, setFilterSpec] = useState({ logic: 'and', rules: [] });
+  const [chartModalOpen, setChartModalOpen] = useState(false);
+  const [forceOpenAnalytics, setForceOpenAnalytics] = useState(0);
   const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(false);
   const [importingDefault, setImportingDefault] = useState(false);
@@ -134,6 +140,8 @@ export default function EgressosDadosTablesPage() {
   const effectiveSection =
     activeSection || currentFileDef?.primary_section || '';
 
+  const serializedFilters = serializeFilterSpec(filterSpec);
+
   const loadRows = useCallback(async () => {
     if (!activeFileKey || !effectiveSection) return;
     setLoading(true);
@@ -146,6 +154,9 @@ export default function EgressosDadosTablesPage() {
       if (sortCol) {
         qs.set('sort', sortCol);
         qs.set('order', sortOrder);
+      }
+      if (serializedFilters) {
+        qs.set('filters', serializedFilters);
       }
       const res = await apiFetch(
         `/egressos-dados/files/${activeFileKey}/rows?${qs.toString()}`
@@ -173,6 +184,7 @@ export default function EgressosDadosTablesPage() {
     appliedSearch,
     sortCol,
     sortOrder,
+    serializedFilters,
     currentFileDef,
   ]);
 
@@ -503,6 +515,34 @@ export default function EgressosDadosTablesPage() {
       )}
 
       {/* Barra das 39 abas primárias com filtros de categoria (PII / Interno / Publicável) */}
+      <TableAnalyticsPanel
+        endpoint={`/egressos-dados/analytics?file=${encodeURIComponent(activeFileKey)}`}
+        label={currentFileDef?.title || activeFileKey}
+        externalFilterSpec={filterSpec}
+        fallbackColumns={columns}
+        forceOpenSignal={forceOpenAnalytics}
+      />
+
+      <FilterBuilderBar
+        columns={columns}
+        filterSpec={filterSpec}
+        onChange={(nextSpec) => {
+          setFilterSpec(nextSpec);
+          setOffset(0);
+        }}
+        onCreateChart={() => setChartModalOpen(true)}
+      />
+
+      <CustomChartModal
+        open={chartModalOpen}
+        scope="egressos-dados"
+        defaultEntity={activeFileKey}
+        fallbackColumns={columns}
+        initialFilterSpec={filterSpec}
+        onClose={() => setChartModalOpen(false)}
+        onCreated={() => setForceOpenAnalytics((v) => v + 1)}
+      />
+
       <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Filtro por categoria de publicação">

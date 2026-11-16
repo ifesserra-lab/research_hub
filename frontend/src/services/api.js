@@ -9,6 +9,51 @@ import { listen } from '@tauri-apps/api/event';
 // `/link` must precede the generic `/{entity}` POST, or it would be read as a
 // request to create an entity named "link".
 const ROUTES = [
+  // SEP-040 / SEP-041: status dos 5 ambientes, rotas analíticas multidomínio e gráficos personalizados
+  [/^\/projects\/status$/, 'GET', () =>
+    invoke('projects_status')],
+
+  [/^\/custom-charts$/, 'POST', (_m, b) =>
+    invoke('create_custom_chart', { payload: b ?? {} })],
+
+  [/^\/custom-charts$/, 'GET', (_m, _b, q) =>
+    invoke('list_custom_charts', {
+      scope: q.get('scope') ?? '',
+      entity: q.get('entity') ?? null,
+    })],
+
+  [/^\/custom-charts\/(\d+)$/, 'DELETE', (m) =>
+    invoke('delete_custom_chart', { id: Number(m[1]) })],
+
+  [/^\/horizon-v2\/analytics$/, 'GET', (_m, _b, q) =>
+    invoke('hv2_get_analytics', {
+      entity: q.get('entity') ?? null,
+      ...(q.has('filters') ? { filters: q.get('filters') } : {}),
+    })],
+
+  [/^\/analytics$/, 'GET', (_m, _b, q) =>
+    invoke('get_horizon_analytics', {
+      entity: q.get('entity') ?? null,
+      ...(q.has('filters') ? { filters: q.get('filters') } : {}),
+    })],
+
+  [/^\/src\/analytics$/, 'GET', (_m, _b, q) =>
+    q.has('filters')
+      ? invoke('src_get_analytics', { filters: q.get('filters') })
+      : invoke('src_get_analytics')],
+
+  [/^\/egressos\/analytics$/, 'GET', (_m, _b, q) =>
+    invoke('egressos_get_analytics', {
+      fileKey: q.get('file') ?? null,
+      ...(q.has('filters') ? { filters: q.get('filters') } : {}),
+    })],
+
+  [/^\/egressos-dados\/analytics$/, 'GET', (_m, _b, q) =>
+    invoke('egressos_dados_get_analytics', {
+      fileKey: q.get('file') ?? null,
+      ...(q.has('filters') ? { filters: q.get('filters') } : {}),
+    })],
+
   // SEP-033: dedicated SRC routes must precede the generic /{entity} patterns,
   // or "/src/acoes" would be read as a request to list an entity named "src".
   [/^\/src\/import$/, 'POST', (_m, b) =>
@@ -32,6 +77,7 @@ const ROUTES = [
       search: q.get('search'),
       sort: q.get('sort'),
       order: q.get('order'),
+      ...(q.has('filters') ? { filters: q.get('filters') } : {}),
     })],
 
   [/^\/src\/acoes$/, 'POST', (_m, b) =>
@@ -84,6 +130,7 @@ const ROUTES = [
       search: q.get('search'),
       sort: q.get('sort'),
       order: q.get('order'),
+      ...(q.has('filters') ? { filters: q.get('filters') } : {}),
     })],
 
   [/^\/egressos\/files\/([^/?]+)\/rows$/, 'POST', (m, b, q) =>
@@ -135,6 +182,7 @@ const ROUTES = [
       search: q.get('search'),
       sort: q.get('sort'),
       order: q.get('order'),
+      ...(q.has('filters') ? { filters: q.get('filters') } : {}),
     })],
 
   [/^\/egressos-dados\/files\/([^/?]+)\/rows$/, 'POST', (m, b) =>
@@ -308,6 +356,7 @@ const ROUTES = [
       search: q.get('search'),
       sort: q.get('sort'),
       order: q.get('order'),
+      ...(q.has('filters') ? { filters: q.get('filters') } : {}),
     })],
 
   [/^\/([^/?]+)\/(\d+)$/, 'GET', (m) =>
@@ -330,6 +379,7 @@ const ROUTES = [
       search: q.get('search'),
       sort: q.get('sort'),
       order: q.get('order'),
+      ...(q.has('filters') ? { filters: q.get('filters') } : {}),
     })],
 ];
 

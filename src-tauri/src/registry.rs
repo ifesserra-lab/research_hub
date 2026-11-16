@@ -49,10 +49,10 @@ pub const SORT_BY_LENGTH: &[&str] = &[
 
 const PERSON_COLUMNS: &[&str] = &[
     "id", "name", "identification_id", "birthday", "cnpq_url", "google_scholar_url",
-    "resume", "citation_names", "initiatives", "research_groups", "knowledge_areas",
-    "academic_education", "articles", "advisorships", "classification",
-    "classification_confidence", "classification_note", "role_evidence",
-    "was_student", "was_staff", "campus",
+    "resume", "citation_names", "linkedin_url", "initiatives", "research_groups",
+    "knowledge_areas", "academic_education", "articles", "advisorships",
+    "classification", "classification_confidence", "classification_note",
+    "role_evidence", "was_student", "was_staff", "campus",
 ];
 
 pub const ENTITIES: &[EntityDef] = &[

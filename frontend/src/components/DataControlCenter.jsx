@@ -58,6 +58,7 @@ export default function DataControlCenter({ apiPrefix = '' }) {
         text: `${summary.total_rows.toLocaleString('pt-BR')} registros em ${summary.tables.length} tabelas.`,
         snapshot: summary.snapshot,
       });
+      window.dispatchEvent(new CustomEvent('horizon:imported', { detail: summary }));
     } catch (err) {
       setMessage({ type: 'error', text: err?.message ?? String(err) });
     } finally {

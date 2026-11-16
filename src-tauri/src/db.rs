@@ -12,6 +12,8 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/003_egressos_tables.sql"),
     include_str!("../migrations/004_egressos_dados_tables.sql"),
     include_str!("../migrations/005_horizon_v2_tables.sql"),
+    include_str!("../migrations/006_person_linkedin_url.sql"),
+    include_str!("../migrations/007_custom_dashboard_charts.sql"),
 ];
 
 pub const DEFAULT_ADMIN_USERNAME: &str = "admin@admin.com";
@@ -132,9 +134,33 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            count, 38,
-            "esperado 38 tabelas (15 exportadas Legacy + admins + 3 SRC + 2 Egressos + 2 Egressos-Dados + 15 Horizon v2)"
+            count, 39,
+            "esperado 39 tabelas (15 exportadas Legacy + admins + 3 SRC + 2 Egressos + 2 Egressos-Dados + 15 Horizon v2 + 1 custom_dashboard_charts)"
         );
+    }
+
+    #[test]
+    fn migration_creates_custom_dashboard_charts_table() {
+        let conn = open_in_memory().unwrap();
+        let cols = table_columns(&conn, "custom_dashboard_charts");
+        for col in [
+            "id",
+            "scope",
+            "entity",
+            "title",
+            "group_by",
+            "metric",
+            "metric_field",
+            "kind",
+            "filter_logic",
+            "filters_json",
+            "created_at",
+        ] {
+            assert!(
+                cols.iter().any(|c| c == col),
+                "custom_dashboard_charts: coluna '{col}' ausente"
+            );
+        }
     }
 
     #[test]
@@ -161,6 +187,10 @@ mod tests {
                 );
             }
         }
+        assert_eq!(table_columns(&conn, "hv2_researchers").len(), 22);
+        assert!(table_columns(&conn, "hv2_researchers").iter().any(|c| c == "linkedin_url"));
+        assert_eq!(table_columns(&conn, "hv2_students").len(), 22);
+        assert!(table_columns(&conn, "hv2_students").iter().any(|c| c == "linkedin_url"));
     }
 
     /// SEP-037 T002: o domínio Egressos-Dados tem tabelas próprias (`egressos_dados_files` e
