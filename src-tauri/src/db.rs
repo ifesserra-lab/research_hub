@@ -11,6 +11,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/002_src_tables.sql"),
     include_str!("../migrations/003_egressos_tables.sql"),
     include_str!("../migrations/004_egressos_dados_tables.sql"),
+    include_str!("../migrations/005_horizon_v2_tables.sql"),
 ];
 
 pub const DEFAULT_ADMIN_USERNAME: &str = "admin@admin.com";
@@ -118,6 +119,7 @@ mod tests {
     /// SEP-033: +3 tabelas do domínio SRC (src_meta, src_acoes, src_participacoes).
     /// SEP-035: +2 tabelas do domínio Egressos (egressos_files, egressos_rows).
     /// SEP-037: +2 tabelas do domínio Egressos-Dados (egressos_dados_files, egressos_dados_rows).
+    /// SEP-039: +15 tabelas do domínio Horizon v2 (hv2_*).
     #[test]
     fn migration_creates_nineteen_tables() {
         let conn = open_in_memory().unwrap();
@@ -130,9 +132,35 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            count, 23,
-            "esperado 23 tabelas (15 exportadas + admins + 3 do domínio SRC + 2 do domínio Egressos + 2 do domínio Egressos-Dados)"
+            count, 38,
+            "esperado 38 tabelas (15 exportadas Legacy + admins + 3 SRC + 2 Egressos + 2 Egressos-Dados + 15 Horizon v2)"
         );
+    }
+
+    #[test]
+    fn horizon_v2_registry_and_schema_agree() {
+        let conn = open_in_memory().unwrap();
+        for def in registry::HORIZON_V2_ENTITIES {
+            let actual = table_columns(&conn, def.table);
+            assert!(!actual.is_empty(), "tabela ausente: {}", def.table);
+
+            for declared in def.columns {
+                assert!(
+                    actual.iter().any(|c| c == declared),
+                    "{}: registry declara '{}', ausente no schema",
+                    def.table,
+                    declared
+                );
+            }
+            for existing in &actual {
+                assert!(
+                    def.has_column(existing),
+                    "{}: schema tem '{}', ausente no registry",
+                    def.table,
+                    existing
+                );
+            }
+        }
     }
 
     /// SEP-037 T002: o domínio Egressos-Dados tem tabelas próprias (`egressos_dados_files` e

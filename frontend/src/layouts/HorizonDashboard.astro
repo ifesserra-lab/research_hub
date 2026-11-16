@@ -1,0 +1,73 @@
+---
+// src/layouts/HorizonDashboard.astro — Layout dedicado da nova aba Horizon (/horizon/*)
+---
+<html lang="pt-br">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Portal Admin - Horizon</title>
+  </head>
+  <body class="m-0 font-sans antialiased bg-slate-50 text-slate-900 flex min-h-screen">
+    <div class="w-64 bg-slate-900 text-white flex flex-col min-h-screen">
+      <div class="p-6 border-b border-slate-800 flex items-center gap-3">
+        <img src="/logo-icon.svg" alt="ResearchHub Logo" class="w-7 h-7" />
+        <div>
+          <h2 class="text-xl font-bold tracking-tight">ResearchHub</h2>
+          <span class="text-xs text-indigo-400 font-medium">Horizon</span>
+        </div>
+      </div>
+      <nav class="flex-1 px-4 py-6 overflow-y-auto">
+        <ul class="space-y-1">
+          <li><a href="/horizon" class="block px-3 py-2 rounded-md text-slate-200 hover:bg-slate-800 hover:text-white transition-colors">Dashboard</a></li>
+          <li><a href="/horizon/researchers" class="block px-3 py-2 rounded-md text-slate-200 hover:bg-slate-800 hover:text-white transition-colors">1. Pesquisadores</a></li>
+          <li><a href="/horizon/articles" class="block px-3 py-2 rounded-md text-slate-200 hover:bg-slate-800 hover:text-white transition-colors">2. Artigos</a></li>
+          <li><a href="/horizon/groups" class="block px-3 py-2 rounded-md text-slate-200 hover:bg-slate-800 hover:text-white transition-colors">3. Grupos de Pesquisa</a></li>
+          <li><a href="/horizon/initiatives" class="block px-3 py-2 rounded-md text-slate-200 hover:bg-slate-800 hover:text-white transition-colors">4. Iniciativas</a></li>
+          <li><a href="/horizon/advisorships" class="block px-3 py-2 rounded-md text-slate-200 hover:bg-slate-800 hover:text-white transition-colors">5. Orientações</a></li>
+          <li><a href="/horizon/awards" class="block px-3 py-2 rounded-md text-slate-200 hover:bg-slate-800 hover:text-white transition-colors">6. Premiações</a></li>
+
+          <li class="pt-5 pb-1 px-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Catálogos Adicionais</li>
+
+          <li><a href="/horizon/students" class="block px-3 py-2 rounded-md text-slate-200 hover:bg-slate-800 hover:text-white transition-colors">7. Alunos</a></li>
+          <li><a href="/horizon/campuses" class="block px-3 py-2 rounded-md text-slate-200 hover:bg-slate-800 hover:text-white transition-colors">8. Campus</a></li>
+          <li><a href="/horizon/organizations" class="block px-3 py-2 rounded-md text-slate-200 hover:bg-slate-800 hover:text-white transition-colors">9. Organizações</a></li>
+          <li><a href="/horizon/fellowships" class="block px-3 py-2 rounded-md text-slate-200 hover:bg-slate-800 hover:text-white transition-colors">10. Bolsas</a></li>
+          <li><a href="/horizon/proficiencies" class="block px-3 py-2 rounded-md text-slate-200 hover:bg-slate-800 hover:text-white transition-colors">11. Proficiências</a></li>
+          <li><a href="/horizon/professional_activities" class="block px-3 py-2 rounded-md text-slate-200 hover:bg-slate-800 hover:text-white transition-colors">12. Ativ. Profissionais</a></li>
+          <li><a href="/horizon/knowledge_areas" class="block px-3 py-2 rounded-md text-slate-200 hover:bg-slate-800 hover:text-white transition-colors">13. Áreas de Conhec.</a></li>
+          <li><a href="/horizon/languages" class="block px-3 py-2 rounded-md text-slate-200 hover:bg-slate-800 hover:text-white transition-colors">14. Idiomas</a></li>
+          <li><a href="/horizon/research_productions" class="block px-3 py-2 rounded-md text-slate-200 hover:bg-slate-800 hover:text-white transition-colors">15. Prod. Científicas</a></li>
+        </ul>
+      </nav>
+      <div class="p-4 border-t border-slate-800 space-y-1">
+        <a href="/projects" class="block px-3 py-2 rounded-md text-slate-300 hover:bg-slate-800 hover:text-white transition-colors">↩ Trocar projeto</a>
+        <a href="#" id="logout" class="block px-3 py-2 rounded-md hover:bg-red-900/50 text-red-400 transition-colors">Sair</a>
+      </div>
+    </div>
+    <div class="flex-1 p-8 overflow-auto">
+      <div class="max-w-7xl mx-auto">
+        <slot />
+      </div>
+    </div>
+    <script>
+    import { invoke } from '@tauri-apps/api/core';
+    (async () => {
+      try {
+        const { authenticated } = await invoke<{ authenticated: boolean }>('session_status');
+        if (!authenticated) {
+          localStorage.removeItem('token');
+          window.location.replace('/login');
+        }
+      } catch {}
+    })();
+
+    document.getElementById('logout')?.addEventListener('click', async (e) => {
+      e.preventDefault();
+      try { await invoke('logout'); } catch {}
+      localStorage.removeItem('token');
+      window.location.href = '/login';
+    });
+  </script>
+</body>
+</html>

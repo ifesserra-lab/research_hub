@@ -97,8 +97,15 @@ pub fn run() {
             commands::create_entity,
             commands::update_entity,
             commands::delete_entity,
+            commands::hv2_list_entities,
+            commands::hv2_get_entity,
+            commands::hv2_create_entity,
+            commands::hv2_update_entity,
+            commands::hv2_delete_entity,
             commands::import_canonical_zip,
             commands::export_canonical_zip,
+            commands::import_horizon_v2_zip,
+            commands::export_horizon_v2_zip,
             commands::import_src_json,
             commands::export_src_json,
             commands::src_list_acoes,
@@ -124,10 +131,13 @@ pub fn run() {
             commands::egressos_update_envelope,
             commands::merge_entities,
             commands::link_entities,
+            commands::hv2_merge_entities,
+            commands::hv2_link_entities,
             commands::github_get_config,
             commands::github_set_config,
             commands::github_download,
             commands::github_check_destination,
+            commands::github_list_branches,
             commands::github_upload,
             commands::github_save_token,
             commands::github_test_token,
@@ -149,6 +159,7 @@ pub fn run() {
             commands::egressos_dados_list_snapshots,
             commands::egressos_dados_sync_get_config,
             commands::egressos_dados_sync_set_config,
+            commands::egressos_dados_sync_list_branches,
             commands::egressos_dados_sync_download,
             commands::egressos_dados_sync_upload,
         ])
@@ -165,6 +176,7 @@ pub(crate) const ROUTES: &[&str] = &[
     "/login",
     "/projects",
     "/dashboard",
+    "/horizon",
     "/src",
     "/src/acoes",
     "/egressos",
@@ -186,6 +198,21 @@ pub(crate) const ROUTES: &[&str] = &[
     "/dashboard/knowledge_areas",
     "/dashboard/languages",
     "/dashboard/research_productions",
+    "/horizon/researchers",
+    "/horizon/articles",
+    "/horizon/groups",
+    "/horizon/initiatives",
+    "/horizon/advisorships",
+    "/horizon/awards",
+    "/horizon/students",
+    "/horizon/campuses",
+    "/horizon/organizations",
+    "/horizon/fellowships",
+    "/horizon/proficiencies",
+    "/horizon/professional_activities",
+    "/horizon/knowledge_areas",
+    "/horizon/languages",
+    "/horizon/research_productions",
 ];
 
 #[cfg(test)]
@@ -198,7 +225,7 @@ mod tests {
             .expect("falha ao construir o app de teste")
     }
 
-    /// SEP-015 / SC-002: os 18 destinos de navegacao devem resolver no binario
+    /// SEP-015 / SC-002: os destinos de navegacao devem resolver no binario
     /// compilado, com os hrefs exatamente como o frontend os escreve — sem barra
     /// final e sem sufixo .html.
     ///
@@ -230,19 +257,24 @@ mod tests {
 
         assert!(
             resolver.get("/dashboard/groups?openId=42".into()).is_some(),
-            "rota com query string nao resolveu"
+            "rota /dashboard/groups com query string nao resolveu"
+        );
+        assert!(
+            resolver.get("/horizon/groups?openId=42".into()).is_some(),
+            "rota /horizon/groups com query string nao resolveu"
         );
     }
 
     /// Guarda contra regressao silenciosa: se uma pagina for adicionada em
-    /// `frontend/src/pages/dashboard/` sem entrar em ROUTES, a contagem denuncia.
-    /// SEP-033: raiz + login + projects + dashboard + 15 entidades + area SRC (2).
+    /// `frontend/src/pages/dashboard/` ou `frontend/src/pages/horizon/` sem entrar
+    /// em ROUTES, a contagem denuncia.
+    /// SEP-039: raiz + login + projects + dashboard (1 + 15) + horizon (1 + 15) + src (2) + egressos (2) + egressos-dados (2) = 41.
     #[test]
     fn contagem_de_rotas_bate_com_o_menu_lateral() {
         assert_eq!(
             ROUTES.len(),
-            25,
-            "ROUTES deve cobrir raiz + login + projects + dashboard + 15 entidades + /src + /src/acoes + /egressos + /egressos/tabelas + /egressos-dados + /egressos-dados/controle"
+            41,
+            "ROUTES deve cobrir raiz + login + projects + dashboard (16) + horizon (16) + /src (2) + /egressos (2) + /egressos-dados (2)"
         );
     }
 

@@ -156,14 +156,10 @@ fn write_json(data: &TableData) -> Result<Vec<u8>, AppError> {
     to_pretty_json(&records)
 }
 
-/// Build the export archive.
-///
-/// `original` is the untouched archive kept by the import. When absent, the
-/// export still runs but everything comes out as text — the degraded path the
-/// Python version also had.
-pub fn build_archive<F>(
+fn build_archive_with_defs<F>(
     conn: &Connection,
     original: Option<&[u8]>,
+    entities: &'static [registry::EntityDef],
     mut on_table: F,
 ) -> Result<(Vec<u8>, Vec<TableExported>, usize), AppError>
 where
@@ -171,9 +167,12 @@ where
 {
     let mut generated: HashMap<String, Vec<u8>> = HashMap::new();
     let mut exported = Vec::new();
+    let exported_defs: Vec<&'static registry::EntityDef> =
+        entities.iter().filter(|e| e.exported).collect();
 
-    for def in registry::exported() {
-        let json_path = format!("{}_canonical.json", def.table);
+    for def in &exported_defs {
+        let canon = def.canonical_table();
+        let json_path = format!("{canon}_canonical.json");
 
         // Column types of the original JSON file for this table, if present.
         // Research R2: the JSON itself is the schema source now.
@@ -221,15 +220,16 @@ where
 
         generated.insert(json_path, write_json(&data)?);
 
-        let done = TableExported { table: def.table.to_string(), rows: data.rows };
+        let done = TableExported { table: canon.to_string(), rows: data.rows };
         on_table(done.clone());
         exported.push(done);
     }
 
     // Legacy residue: parquet files of managed tables are neither regenerated
     // nor preserved (research R4) — the declared SEP-032 format change.
-    let dropped: HashSet<String> = registry::exported()
-        .map(|def| format!("parquet/{}_canonical.parquet", def.table))
+    let dropped: HashSet<String> = exported_defs
+        .iter()
+        .map(|def| format!("parquet/{}_canonical.parquet", def.canonical_table()))
         .collect();
 
     let mut out = Vec::new();
@@ -276,6 +276,36 @@ where
     }
 
     Ok((out, exported, preserved))
+}
+
+/// Build the export archive.
+///
+/// `original` is the untouched archive kept by the import. When absent, the
+/// export still runs but everything comes out as text — the degraded path the
+/// Python version also had.
+pub fn build_archive<F>(
+    conn: &Connection,
+    original: Option<&[u8]>,
+    on_table: F,
+) -> Result<(Vec<u8>, Vec<TableExported>, usize), AppError>
+where
+    F: FnMut(TableExported),
+{
+    build_archive_with_defs(conn, original, registry::ENTITIES, on_table)
+}
+
+/// Build the export archive for the isolated Horizon v2 tables (`hv2_*`),
+/// emitting `{canonical_table}_canonical.json` and preserving all unmanaged
+/// entries from `horizon_v2_original.zip` (SEP-039).
+pub fn build_horizon_v2_archive<F>(
+    conn: &Connection,
+    original: Option<&[u8]>,
+    on_table: F,
+) -> Result<(Vec<u8>, Vec<TableExported>, usize), AppError>
+where
+    F: FnMut(TableExported),
+{
+    build_archive_with_defs(conn, original, registry::HORIZON_V2_ENTITIES, on_table)
 }
 
 #[cfg(test)]
@@ -464,26 +494,35 @@ mod tests {
 
         let (out, tables, preserved) = build_archive(&conn, Some(&original), |_| {}).unwrap();
 
-        // 395 original entries: 15 canonical JSONs replaced by this export,
-        // the rest preserved (no parquet exists in the new format to drop).
-        assert_eq!(preserved, 380, "as entradas não gerenciadas devem sair intactas");
+        // 698 original entries in the new exports_canonical.zip: 15 canonical JSONs
+        // replaced by this export, the remaining 683 preserved byte-for-byte.
+        assert_eq!(preserved, 683, "as entradas não gerenciadas devem sair intactas");
         assert_eq!(tables.len(), 15);
 
         let mut src = zip::ZipArchive::new(std::io::Cursor::new(&original)).unwrap();
         let mut dst = zip::ZipArchive::new(std::io::Cursor::new(&out)).unwrap();
-        assert_eq!(dst.len(), 395, "o pacote exportado deve ter o mesmo total de entradas");
+        assert_eq!(dst.len(), 698, "o pacote exportado deve ter o mesmo total de entradas");
         assert!(
             (0..dst.len()).all(|i| !dst.by_index(i).unwrap().name().starts_with("parquet/")),
             "nenhum parquet pode existir no export"
         );
 
-        // Unmanaged tracking files must survive byte for byte, uncompressed
-        // and recompressed by nobody.
-        let mut before = Vec::new();
-        src.by_name("advisorships_tracking.json").unwrap().read_to_end(&mut before).unwrap();
-        let mut after = Vec::new();
-        dst.by_name("advisorships_tracking.json").unwrap().read_to_end(&mut after).unwrap();
-        assert_eq!(before, after, "entrada não gerenciada foi alterada");
+        // Unmanaged tracking and new pipeline files must survive byte for byte.
+        for unmanaged_name in [
+            "advisorships_tracking.json",
+            "export_manifest.json",
+            "horizon_ids_canonical.json",
+            "horizon_id_aliases_canonical.json",
+            "source_document_states_canonical.json",
+            "initiatives_analytics_mart.json",
+            "knowledge_areas_mart.json",
+        ] {
+            let mut before = Vec::new();
+            src.by_name(unmanaged_name).unwrap().read_to_end(&mut before).unwrap();
+            let mut after = Vec::new();
+            dst.by_name(unmanaged_name).unwrap().read_to_end(&mut after).unwrap();
+            assert_eq!(before, after, "entrada não gerenciada {unmanaged_name} foi alterada");
+        }
 
         // Every canonical table must come back with the original's types.
         for def in registry::exported() {
@@ -523,5 +562,72 @@ mod tests {
         assert!(tables.iter().all(|t| t.rows == 0));
         let json = String::from_utf8(entry(&out, "languages_canonical.json")).unwrap();
         assert_eq!(json.trim(), "[]");
+    }
+
+    /// SEP-039 T013: `build_horizon_v2_archive` reads from `hv2_*` tables, emits
+    /// `{canonical_table}_canonical.json` (without the `hv2_` prefix), restores
+    /// structured `initiatives.enrichment` objects when non-null (even when the
+    /// first rows have `enrichment: null`), and preserves unmanaged entries.
+    #[test]
+    fn horizon_v2_round_trip_preserves_enrichment_and_entries() {
+        let initiatives_orig: &[u8] = br#"[
+            {"id": 1, "name": "Sem Enriquecimento", "enrichment": null},
+            {"id": 2, "name": "Com SIGPesq", "enrichment": {"source": "sigpesq_project_files", "project_code": "6903", "needs_review": false, "palavras_chave": ["IA", "NLP"], "objetivos": {"geral": "Pesquisar IA", "especificos": ["E1"]}}}
+        ]"#;
+        let mut orig_zip = Vec::new();
+        {
+            let mut z = zip::ZipWriter::new(std::io::Cursor::new(&mut orig_zip));
+            let opts: zip::write::FileOptions<()> = zip::write::FileOptions::default();
+            for def in registry::horizon_v2_exported() {
+                let name = format!("{}_canonical.json", def.canonical_table());
+                z.start_file(name, opts).unwrap();
+                if def.canonical_table() == "initiatives" {
+                    z.write_all(initiatives_orig).unwrap();
+                } else {
+                    z.write_all(b"[]").unwrap();
+                }
+            }
+            z.start_file("export_manifest.json", opts).unwrap();
+            z.write_all(br#"{"key_fingerprint":"c833fb942765fd0c","official":true}"#).unwrap();
+            z.start_file("horizon_ids_canonical.json", opts).unwrap();
+            z.write_all(br#"{"rule_version":5,"ids":[]}"#).unwrap();
+            z.finish().unwrap();
+        }
+
+        let dir = std::env::temp_dir().join(format!(
+            "rh-hv2-rt-{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut conn = db::open(&dir.join("hub.db")).unwrap();
+        db::migrate(&conn).unwrap();
+
+        // Populate a legacy initiative to ensure `build_horizon_v2_archive` ignores legacy tables
+        conn.execute("INSERT INTO initiatives (id, name) VALUES (99, 'Legado')", []).unwrap();
+
+        crate::import::import_horizon_v2_archive(&mut conn, &orig_zip, &dir, |_| {}).unwrap();
+        let (out, tables, preserved) = build_horizon_v2_archive(&conn, Some(&orig_zip), |_| {}).unwrap();
+
+        assert_eq!(tables.len(), 15);
+        assert_eq!(preserved, 2);
+
+        let exported_initiatives: Json =
+            serde_json::from_slice(&entry(&out, "initiatives_canonical.json")).unwrap();
+        let arr = exported_initiatives.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert!(arr[0]["enrichment"].is_null());
+        assert!(arr[1]["enrichment"].is_object(), "enrichment deve sair como objeto estruturado JSON");
+        assert_eq!(arr[1]["enrichment"]["project_code"], "6903");
+        assert_eq!(arr[1]["enrichment"]["objetivos"]["geral"], "Pesquisar IA");
+        assert_eq!(
+            entry(&out, "export_manifest.json"),
+            br#"{"key_fingerprint":"c833fb942765fd0c","official":true}"#
+        );
+        assert_eq!(
+            entry(&out, "horizon_ids_canonical.json"),
+            br#"{"rule_version":5,"ids":[]}"#
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

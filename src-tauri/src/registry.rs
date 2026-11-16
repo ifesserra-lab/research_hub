@@ -41,6 +41,10 @@ pub const SORT_BY_LENGTH: &[&str] = &[
     "languages",
     "professional_activities",
     "research_productions",
+    "enrichment",
+    "members",
+    "leaders",
+    "academic_education",
 ];
 
 const PERSON_COLUMNS: &[&str] = &[
@@ -240,9 +244,163 @@ pub fn exported() -> impl Iterator<Item = &'static EntityDef> {
     ENTITIES.iter().filter(|e| e.exported)
 }
 
+/// SEP-039: Isolated entity catalog (`hv2_*` SQLite tables) for the new Horizon tab.
+pub const HORIZON_V2_ENTITIES: &[EntityDef] = &[
+    EntityDef {
+        route: "researchers",
+        table: "hv2_researchers",
+        columns: PERSON_COLUMNS,
+        search_column: Some("name"),
+        exported: true,
+    },
+    EntityDef {
+        route: "students",
+        table: "hv2_students",
+        columns: PERSON_COLUMNS,
+        search_column: Some("name"),
+        exported: true,
+    },
+    EntityDef {
+        route: "articles",
+        table: "hv2_articles",
+        columns: &[
+            "id", "title", "doi", "year", "type", "journal_conference", "volume",
+            "pages", "campus",
+        ],
+        search_column: Some("title"),
+        exported: true,
+    },
+    EntityDef {
+        route: "groups",
+        table: "hv2_research_groups",
+        columns: &[
+            "id", "name", "description", "short_name", "organization_id", "campus_id",
+            "cnpq_url", "site", "organization", "campus", "knowledge_areas", "members",
+            "leaders",
+        ],
+        search_column: Some("name"),
+        exported: true,
+    },
+    EntityDef {
+        route: "initiatives",
+        table: "hv2_initiatives",
+        columns: &[
+            "id", "name", "status", "description", "start_date", "end_date",
+            "initiative_type_id", "initiative_type", "organization_id", "organization",
+            "parent_id", "team", "demandante", "campus", "research_group",
+            "knowledge_areas", "enrichment", "external_partner",
+            "external_research_group",
+        ],
+        search_column: Some("name"),
+        exported: true,
+    },
+    EntityDef {
+        route: "advisorships",
+        table: "hv2_advisorships",
+        columns: &[
+            "id", "name", "status", "description", "start_date", "end_date", "campus",
+            "advisorships", "team",
+        ],
+        search_column: Some("name"),
+        exported: true,
+    },
+    EntityDef {
+        route: "awards",
+        table: "hv2_awards",
+        columns: &["id", "researcher_id", "title", "year", "campus"],
+        search_column: Some("title"),
+        exported: true,
+    },
+    EntityDef {
+        route: "campuses",
+        table: "hv2_campuses",
+        columns: &[
+            "id", "name", "description", "short_name", "organization_id", "parent_id",
+        ],
+        search_column: Some("name"),
+        exported: true,
+    },
+    EntityDef {
+        route: "organizations",
+        table: "hv2_organizations",
+        columns: &["id", "name", "description", "short_name", "campus"],
+        search_column: Some("name"),
+        exported: true,
+    },
+    EntityDef {
+        route: "fellowships",
+        table: "hv2_fellowships",
+        columns: &["id", "name", "description", "value", "campus"],
+        search_column: Some("name"),
+        exported: true,
+    },
+    EntityDef {
+        route: "proficiencies",
+        table: "hv2_proficiencies",
+        columns: &[
+            "id", "researcher_id", "language_id", "comprehension", "speaking",
+            "reading", "writing", "campus",
+        ],
+        search_column: None,
+        exported: true,
+    },
+    EntityDef {
+        route: "professional_activities",
+        table: "hv2_professional_activities",
+        columns: &[
+            "id", "researcher_id", "organization_id", "institution", "institution_name",
+            "institution_acronym", "institution_country", "period", "start_year",
+            "end_year", "bond", "classification", "work_regime", "role_function",
+            "activity_type", "current", "campus",
+        ],
+        search_column: Some("institution_name"),
+        exported: true,
+    },
+    EntityDef {
+        route: "knowledge_areas",
+        table: "hv2_knowledge_areas",
+        columns: &["id", "name", "campus"],
+        search_column: Some("name"),
+        exported: true,
+    },
+    EntityDef {
+        route: "languages",
+        table: "hv2_languages",
+        columns: &["id", "name", "campus"],
+        search_column: Some("name"),
+        exported: true,
+    },
+    EntityDef {
+        route: "research_productions",
+        table: "hv2_research_productions",
+        columns: &[
+            "id", "title", "year", "production_type_id", "publisher", "isbn", "edition",
+            "book_title", "pages", "version", "platform", "link", "campus",
+        ],
+        search_column: Some("title"),
+        exported: true,
+    },
+];
+
+pub fn by_horizon_v2_route(route: &str) -> Result<&'static EntityDef, AppError> {
+    HORIZON_V2_ENTITIES
+        .iter()
+        .find(|e| e.route == route)
+        .ok_or_else(|| AppError::UnknownEntity(route.to_string()))
+}
+
+pub fn horizon_v2_exported() -> impl Iterator<Item = &'static EntityDef> {
+    HORIZON_V2_ENTITIES.iter().filter(|e| e.exported)
+}
+
 impl EntityDef {
     pub fn has_column(&self, name: &str) -> bool {
         self.columns.contains(&name)
+    }
+
+    /// Canonical table name inside `exports_canonical.zip` (`{canonical_table}_canonical.json`).
+    pub fn canonical_table(&self) -> &'static str {
+        self.table.strip_prefix("hv2_").unwrap_or(self.table)
     }
 
     /// SQL expression to order by, given a validated column name.
@@ -283,6 +441,35 @@ mod tests {
         assert!(matches!(by_src_route("groups"), Err(AppError::UnknownEntity(_))));
     }
 
+    #[test]
+    fn horizon_v2_routes_resolve_and_never_collide() {
+        assert_eq!(HORIZON_V2_ENTITIES.len(), 15);
+        assert_eq!(horizon_v2_exported().count(), 15);
+        assert!(matches!(
+            by_horizon_v2_route("admins"),
+            Err(AppError::UnknownEntity(_))
+        ));
+
+        for v2 in HORIZON_V2_ENTITIES {
+            let resolved = by_horizon_v2_route(v2.route).unwrap();
+            assert_eq!(resolved.table, v2.table);
+            assert!(v2.table.starts_with("hv2_"), "tabela deve ter prefixo hv2_: {}", v2.table);
+
+            let legacy = by_route(v2.route).unwrap();
+            assert_ne!(
+                v2.table, legacy.table,
+                "rota '{}' deve resolver para tabelas físicas distintas entre Horizon e Horizon Legacy",
+                v2.route
+            );
+            assert_eq!(
+                v2.canonical_table(),
+                legacy.table,
+                "canonical_table() deve remover hv2_ e coincidir com o nome canônico do ZIP"
+            );
+            assert_eq!(legacy.canonical_table(), legacy.table);
+        }
+    }
+
     /// Guards against the class of bug that made `proficiencies` and
     /// `professional_activities` show an always-empty "name" column: the Astro
     /// pages were generated from a template assuming every entity has `name`,
@@ -311,6 +498,81 @@ mod tests {
             }
         }
         assert!(problems.is_empty(), "páginas fora de sincronia:\n  {}", problems.join("\n  "));
+    }
+
+    /// SEP-039 T024: verifica que todas as 15 páginas em `frontend/src/pages/horizon/*.astro`
+    /// existem, declaram apenas rotas e colunas válidas de `HORIZON_V2_ENTITIES` e expõem
+    /// 100% das colunas canônicas de cada entidade em `fields`.
+    #[test]
+    fn horizon_v2_pages_only_declare_columns_that_exist() {
+        let pages = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("frontend/src/pages/horizon");
+
+        let mut problems = Vec::new();
+        let mut seen_routes = std::collections::HashSet::new();
+
+        for file in std::fs::read_dir(&pages).expect("pasta de páginas horizon").flatten() {
+            let text = std::fs::read_to_string(file.path()).unwrap_or_default();
+
+            let Some(route) = between(&text, "entity=\"", "\"") else { continue };
+            let Some(def) = HORIZON_V2_ENTITIES.iter().find(|e| e.route == route) else {
+                problems.push(format!("{route}: rota não existe em HORIZON_V2_ENTITIES"));
+                continue;
+            };
+            seen_routes.insert(route.to_string());
+
+            if !text.contains("apiPrefix=\"/horizon-v2\"") {
+                problems.push(format!("{route}: falta apiPrefix=\"/horizon-v2\""));
+            }
+            if !text.contains("basePath=\"/horizon\"") {
+                problems.push(format!("{route}: falta basePath=\"/horizon\""));
+            }
+
+            if let Some(list) = between(&text, "columns={[", "]}") {
+                for column in list.split('\'').skip(1).step_by(2) {
+                    if !def.has_column(column) {
+                        problems.push(format!("{route}: columns declara '{column}', que não existe"));
+                    }
+                }
+            } else {
+                problems.push(format!("{route}: sem bloco columns={{[...]}}"));
+            }
+
+            // Extract all `name: '<col>'` inside `fields={[...]}`
+            let mut field_cols = std::collections::HashSet::new();
+            for part in text.split("name: '").skip(1) {
+                if let Some(col) = part.split('\'').next() {
+                    field_cols.insert(col.to_string());
+                    if !def.has_column(col) {
+                        problems.push(format!("{route}: fields declara '{col}', que não existe"));
+                    }
+                }
+            }
+            for &expected_col in def.columns {
+                if !field_cols.contains(expected_col) {
+                    problems.push(format!(
+                        "{route}: coluna canônica '{expected_col}' ausente em fields"
+                    ));
+                }
+            }
+        }
+
+        for def in HORIZON_V2_ENTITIES {
+            if !seen_routes.contains(def.route) {
+                problems.push(format!(
+                    "{}: página frontend/src/pages/horizon/{}.astro não encontrada",
+                    def.route, def.route
+                ));
+            }
+        }
+
+        assert!(
+            problems.is_empty(),
+            "páginas horizon fora de sincronia:\n  {}",
+            problems.join("\n  ")
+        );
     }
 
     fn between<'a>(haystack: &'a str, start: &str, end: &str) -> Option<&'a str> {

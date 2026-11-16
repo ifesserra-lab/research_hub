@@ -1,0 +1,37 @@
+---
+import HorizonDashboard from '../../layouts/HorizonDashboard.astro';
+import EntityPage from '../../components/EntityPage.jsx';
+---
+
+<HorizonDashboard>
+  <EntityPage
+    client:load
+    entity="students"
+    apiPrefix="/horizon-v2"
+    basePath="/horizon"
+    columns={['id', 'name', 'classification', 'initiatives', 'research_groups', 'knowledge_areas', 'academic_education', 'articles', 'advisorships', 'campus']}
+    fields={[
+      { name: 'id', label: 'ID', type: 'number' },
+      { name: 'name', label: 'Nome', required: true },
+      { name: 'identification_id', label: 'ID Lattes / Identificação' },
+      { name: 'birthday', label: 'Data de Nascimento' },
+      { name: 'cnpq_url', label: 'URL CNPq' },
+      { name: 'google_scholar_url', label: 'URL Google Scholar' },
+      { name: 'resume', label: 'Resumo' },
+      { name: 'citation_names', label: 'Nomes de Citação' },
+      { name: 'classification', label: 'Classificação' },
+      { name: 'classification_confidence', label: 'Confiança da Classificação' },
+      { name: 'classification_note', label: 'Nota de Classificação' },
+      { name: 'role_evidence', label: 'Evidências de Papel (Vínculos)', type: 'json_readonly' },
+      { name: 'was_student', label: 'Foi Estudante' },
+      { name: 'was_staff', label: 'Foi Servidor' },
+      { name: 'initiatives', label: 'Iniciativas (Vínculos)', type: 'json_readonly' },
+      { name: 'research_groups', label: 'Grupos de Pesquisa (Vínculos)', type: 'json_readonly' },
+      { name: 'knowledge_areas', label: 'Áreas de Conhecimento (Vínculos)', type: 'json_readonly' },
+      { name: 'academic_education', label: 'Formação Acadêmica (Vínculos)', type: 'json_readonly' },
+      { name: 'articles', label: 'Artigos (Vínculos)', type: 'json_readonly' },
+      { name: 'advisorships', label: 'Orientações (Vínculos)', type: 'json_readonly' },
+      { name: 'campus', label: 'Campus (Vínculos)', type: 'json_readonly' }
+    ]}
+  />
+</HorizonDashboard>

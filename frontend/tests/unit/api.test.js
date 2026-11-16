@@ -7,7 +7,7 @@ const listen = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args) => invoke(...args) }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: (...args) => listen(...args) }));
 
-const { apiFetch, onSyncProgress } = await import('../../src/services/api.js');
+const { apiFetch, onSyncProgress, onHorizonV2ImportProgress } = await import('../../src/services/api.js');
 
 beforeEach(() => {
   invoke.mockReset();
@@ -259,20 +259,46 @@ describe('apiFetch GitHub routing', () => {
     expect(invoke).toHaveBeenCalledWith('github_check_destination', { project: 'horizon' });
   });
 
-  it('triggers upload with project and confirmOverwrite', async () => {
+  it('triggers upload with project, confirmOverwrite and branch options', async () => {
     invoke.mockResolvedValue({
       commit_sha: 'c1',
       html_url: 'https://github.com/o/r/commit/c1',
       replaced: false,
+      branch: 'update/horizon-1',
+      created_branch: true,
     });
     await apiFetch('/github/upload', {
       method: 'POST',
-      body: JSON.stringify({ project: 'horizon', confirmOverwrite: true }),
+      body: JSON.stringify({
+        project: 'horizon',
+        confirmOverwrite: true,
+        createNewBranch: true,
+        baseBranch: 'main',
+        newBranch: 'update/horizon-1',
+        targetBranch: null,
+      }),
     });
     expect(invoke).toHaveBeenCalledWith('github_upload', {
       project: 'horizon',
       confirmOverwrite: true,
+      createNewBranch: true,
+      baseBranch: 'main',
+      newBranch: 'update/horizon-1',
+      targetBranch: null,
     });
+  });
+
+  it('lists branches for a project via /github/branches', async () => {
+    invoke.mockResolvedValue([
+      { name: 'main', commit_sha: '111' },
+      { name: 'develop', commit_sha: '222' },
+    ]);
+    const res = await apiFetch('/github/branches?project=src&repo=rafaeldeps/src-sync');
+    expect(invoke).toHaveBeenCalledWith('github_list_branches', {
+      project: 'src',
+      repo: 'rafaeldeps/src-sync',
+    });
+    expect(res).toHaveLength(2);
   });
 
   it('saves personal access token', async () => {
@@ -600,17 +626,133 @@ describe('apiFetch egressos-dados tables and sync routing', () => {
       path: null,
     });
 
+    await apiFetch('/egressos-dados/sync/branches?repo=ifesserra-lab/egressos-dados');
+    expect(invoke).toHaveBeenCalledWith('egressos_dados_sync_list_branches', {
+      repo: 'ifesserra-lab/egressos-dados',
+    });
+
     await apiFetch('/egressos-dados/sync/upload', {
       method: 'POST',
       body: JSON.stringify({
         confirmOverwrite: true,
         commitMessage: 'Atualiza 39 datasets',
+        createNewBranch: true,
+        baseBranch: 'main',
+        newBranch: 'update/egressos_dados-123',
+        targetBranch: null,
       }),
     });
     expect(invoke).toHaveBeenCalledWith('egressos_dados_sync_upload', {
       confirmOverwrite: true,
       commitMessage: 'Atualiza 39 datasets',
+      createNewBranch: true,
+      baseBranch: 'main',
+      newBranch: 'update/egressos_dados-123',
+      targetBranch: null,
     });
+  });
+});
+
+// SEP-039: dedicated Horizon v2 routes (/horizon-v2/*) and progress listener (T015)
+describe('apiFetch Horizon v2 routing', () => {
+  it('routes /horizon-v2/:entity list, get, create, update and delete to hv2_* commands', async () => {
+    invoke.mockResolvedValue({ items: [], total: 0 });
+    await apiFetch('/horizon-v2/initiatives?limit=50&offset=0&search=sigpesq&sort=enrichment&order=desc');
+    expect(invoke).toHaveBeenCalledWith('hv2_list_entities', {
+      entity: 'initiatives',
+      limit: 50,
+      offset: 0,
+      search: 'sigpesq',
+      sort: 'enrichment',
+      order: 'desc',
+    });
+
+    invoke.mockResolvedValue({ id: 42, name: 'Projeto IA' });
+    await apiFetch('/horizon-v2/initiatives/42');
+    expect(invoke).toHaveBeenCalledWith('hv2_get_entity', { entity: 'initiatives', id: 42 });
+
+    invoke.mockResolvedValue({ id: 43, name: 'Nova Iniciativa' });
+    await apiFetch('/horizon-v2/initiatives', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'Nova Iniciativa' }),
+    });
+    expect(invoke).toHaveBeenCalledWith('hv2_create_entity', {
+      entity: 'initiatives',
+      payload: { name: 'Nova Iniciativa' },
+    });
+
+    invoke.mockResolvedValue({ id: 42, name: 'Editada' });
+    await apiFetch('/horizon-v2/initiatives/42', {
+      method: 'PUT',
+      body: JSON.stringify({ name: 'Editada' }),
+    });
+    expect(invoke).toHaveBeenCalledWith('hv2_update_entity', {
+      entity: 'initiatives',
+      id: 42,
+      payload: { name: 'Editada' },
+    });
+
+    invoke.mockResolvedValue(null);
+    await apiFetch('/horizon-v2/initiatives/42', { method: 'DELETE' });
+    expect(invoke).toHaveBeenCalledWith('hv2_delete_entity', { entity: 'initiatives', id: 42 });
+  });
+
+  it('routes /horizon-v2/merge/:entity, /horizon-v2/link, /horizon-v2/import and /horizon-v2/export', async () => {
+    invoke.mockResolvedValue({ id: 1, name: 'Grupo Unificado' });
+    await apiFetch('/horizon-v2/merge/groups', {
+      method: 'POST',
+      body: JSON.stringify({ source_ids: [1, 2], resolved_data: { name: 'Grupo Unificado' } }),
+    });
+    expect(invoke).toHaveBeenCalledWith('hv2_merge_entities', {
+      entity: 'groups',
+      sourceIds: [1, 2],
+      resolvedData: { name: 'Grupo Unificado' },
+    });
+
+    invoke.mockResolvedValue({ id: 1 });
+    await apiFetch('/horizon-v2/link', {
+      method: 'POST',
+      body: JSON.stringify({
+        parent_type: 'researchers',
+        parent_id: 1,
+        child_type: 'groups',
+        child_id: 7,
+      }),
+    });
+    expect(invoke).toHaveBeenCalledWith('hv2_link_entities', {
+      parentType: 'researchers',
+      parentId: 1,
+      childType: 'groups',
+      childId: 7,
+    });
+
+    invoke.mockResolvedValue({ total_rows: 70615, tables: [] });
+    await apiFetch('/horizon-v2/import', {
+      method: 'POST',
+      body: JSON.stringify({ path: '/tmp/exports_canonical.zip' }),
+    });
+    expect(invoke).toHaveBeenCalledWith('import_horizon_v2_zip', {
+      path: '/tmp/exports_canonical.zip',
+    });
+
+    await apiFetch('/horizon-v2/import', { method: 'POST' });
+    expect(invoke).toHaveBeenCalledWith('import_horizon_v2_zip', { path: null });
+
+    invoke.mockResolvedValue({ tables: [], preserved_entries: 683, path: '/tmp/out.zip' });
+    await apiFetch('/horizon-v2/export', { method: 'POST' });
+    expect(invoke).toHaveBeenCalledWith('export_horizon_v2_zip');
+  });
+
+  it('registers import progress listener via onHorizonV2ImportProgress', async () => {
+    const handler = vi.fn();
+    listen.mockImplementation((event, cb) => {
+      cb({ payload: { table: 'hv2_initiatives', rows: 15505 } });
+      return Promise.resolve(() => {});
+    });
+
+    await onHorizonV2ImportProgress(handler);
+    expect(listen).toHaveBeenCalledWith('horizon-v2-import://progress', expect.any(Function));
+    expect(handler).toHaveBeenCalledWith({ table: 'hv2_initiatives', rows: 15505 });
   });
 });
 

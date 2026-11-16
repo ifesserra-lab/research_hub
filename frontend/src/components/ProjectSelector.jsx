@@ -2,9 +2,16 @@ import React, { useState } from 'react';
 
 export const DEFAULT_PROJECTS = [
   {
-    id: 'horizon',
+    id: 'horizon-v2',
     title: 'Horizon',
-    description: 'Tabelas canônicas do DataLake (15 abas de curadoria)',
+    description:
+      'Nova versão das tabelas canônicas do DataLake (15 abas de curadoria e enriquecimento SIGPesq)',
+    href: '/horizon',
+  },
+  {
+    id: 'horizon',
+    title: 'Horizon Legacy',
+    description: 'Tabelas canônicas legadas do DataLake (15 abas de curadoria)',
     href: '/dashboard',
   },
   {

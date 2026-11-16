@@ -133,6 +133,15 @@ describe('EgressosDadosDataControl (US3 & US4 - Local Import/Export, Snapshots &
           token_hint: '9f2a',
         };
       }
+      if (
+        endpoint.startsWith('/egressos-dados/sync/branches') &&
+        !options?.method
+      ) {
+        return [
+          { name: 'main', commit_sha: '111' },
+          { name: 'curadoria-2026', commit_sha: '222' },
+        ];
+      }
       if (endpoint === '/egressos-dados/sync/download' && options?.method === 'POST') {
         return {
           path: 'https://github.com/ifesserra-lab/egressos-dados/tree/main',
@@ -143,10 +152,15 @@ describe('EgressosDadosDataControl (US3 & US4 - Local Import/Export, Snapshots &
         };
       }
       if (endpoint === '/egressos-dados/sync/upload' && options?.method === 'POST') {
+        const body = JSON.parse(options.body || '{}');
         return {
           commit_sha: 'a1b2c3d4e5f6',
           html_url: 'https://github.com/ifesserra-lab/egressos-dados/commit/a1b2c3d4e5f6',
-          replaced: true,
+          replaced: !body.createNewBranch,
+          branch: body.createNewBranch
+            ? body.newBranch || 'update/egressos_dados-auto'
+            : body.targetBranch || 'main',
+          created_branch: Boolean(body.createNewBranch),
         };
       }
       throw new Error(`Unexpected endpoint: ${endpoint}`);
@@ -164,6 +178,21 @@ describe('EgressosDadosDataControl (US3 & US4 - Local Import/Export, Snapshots &
     expect(screen.getByLabelText(/^Branch$/i).value).toBe('main');
     expect(screen.getByLabelText(/Diretório raiz no repositório/i).value).toBe('.');
 
+    // Carrega branches remotas além da main (SEP-038, US2)
+    fireEvent.click(screen.getByRole('button', { name: /Carregar branches/i }));
+    await waitFor(() => {
+      expect(apiFetchMock).toHaveBeenCalledWith(
+        '/egressos-dados/sync/branches?repo=ifesserra-lab%2Fegressos-dados'
+      );
+    });
+
+    const branchSelect = screen.getByRole('combobox', {
+      name: /Selecionar branch existente/i,
+    });
+    expect(Array.from(branchSelect.options).map((o) => o.value)).toContain(
+      'curadoria-2026'
+    );
+
     // Dispara download dos 39 JSONs do GitHub
     fireEvent.click(screen.getByRole('button', { name: /Baixar do GitHub \(39 JSONs\)/i }));
 
@@ -173,12 +202,44 @@ describe('EgressosDadosDataControl (US3 & US4 - Local Import/Export, Snapshots &
       ).toBeDefined();
     });
 
-    // Dispara upload atômico dos 39 JSONs para o GitHub
+    // 1. Modo padrão "Criar nova branch com os novos dados" (SEP-038, US1)
+    const createRadio = screen.getByRole('radio', {
+      name: /Criar nova branch com os novos dados/i,
+    });
+    expect(createRadio.checked).toBe(true);
+    const newBranchInput = screen.getByRole('textbox', {
+      name: /Nome da nova branch/i,
+    });
+    fireEvent.change(newBranchInput, {
+      target: { value: 'update/egressos_dados-lote1' },
+    });
+
     fireEvent.click(screen.getByRole('button', { name: /Publicar 39 JSONs no GitHub/i }));
 
     await waitFor(() => {
       expect(
-        screen.getByText(/Publicação concluída no GitHub \(ifesserra-lab\/egressos-dados@main\)/i)
+        screen.getByText(
+          /Publicação concluída no GitHub \(ifesserra-lab\/egressos-dados@update\/egressos_dados-lote1 — nova branch criada\)/i
+        )
+      ).toBeDefined();
+    });
+
+    // Branch base continua 'main' e a nova branch passa a constar na lista (FR-005)
+    expect(screen.getByLabelText(/^Branch$/i).value).toBe('main');
+    expect(Array.from(branchSelect.options).map((o) => o.value)).toContain(
+      'update/egressos_dados-lote1'
+    );
+
+    // 2. Alterna para "Enviar na branch selecionada" escolhendo 'curadoria-2026'
+    fireEvent.change(branchSelect, { target: { value: 'curadoria-2026' } });
+    fireEvent.click(screen.getByRole('radio', { name: /Enviar na branch selecionada/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Publicar 39 JSONs no GitHub/i }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          /Publicação concluída no GitHub \(ifesserra-lab\/egressos-dados@curadoria-2026\)/i
+        )
       ).toBeDefined();
     });
   });

@@ -1,0 +1,25 @@
+---
+import HorizonDashboard from '../../layouts/HorizonDashboard.astro';
+import EntityPage from '../../components/EntityPage.jsx';
+---
+
+<HorizonDashboard>
+  <EntityPage
+    client:load
+    entity="articles"
+    apiPrefix="/horizon-v2"
+    basePath="/horizon"
+    columns={['id', 'title', 'year', 'type', 'journal_conference', 'doi', 'campus']}
+    fields={[
+      { name: 'id', label: 'ID', type: 'number' },
+      { name: 'title', label: 'Título', required: true },
+      { name: 'doi', label: 'DOI' },
+      { name: 'year', label: 'Ano', type: 'number' },
+      { name: 'type', label: 'Tipo' },
+      { name: 'journal_conference', label: 'Periódico / Conferência' },
+      { name: 'volume', label: 'Volume' },
+      { name: 'pages', label: 'Páginas' },
+      { name: 'campus', label: 'Campus (Vínculos)', type: 'json_readonly' }
+    ]}
+  />
+</HorizonDashboard>

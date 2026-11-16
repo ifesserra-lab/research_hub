@@ -603,17 +603,104 @@ async fn check_destination_retorna_flags_e_trata_ausencias() {
     assert!(w["message"].as_str().unwrap().contains("repositório não encontrado ou sem acesso"));
 }
 
-// ------------------------------------------------------------------ T015
+// ------------------------------------------------------------------ T015 / SEP-038 (US3)
 
 #[tokio::test]
-async fn upload_recusa_src_por_politica() {
+async fn upload_src_publica_json_consolidado_identico_ao_export_local_em_nova_branch_ou_existente() {
+    use research_hub_lib::sync_domain::UploadBranchOptions;
+    use research_hub_lib::sync_github::upload_horizon_export_with_options;
+
     let temp = tempfile::tempdir().unwrap();
     let server = MockServer::start().await;
-    let client = GitHubClient::new(&server.uri(), None);
+    let client = GitHubClient::new(&server.uri(), Some("ghp_src_token".into()));
 
-    let err = upload_horizon_export(vec![], temp.path(), "src", false, &client, no_progress()).await.unwrap_err();
-    assert_eq!(wire(&err)["kind"], "sync_policy");
-    assert_eq!(server.received_requests().await.unwrap().len(), 0);
+    let mut conn = db::open_in_memory().unwrap();
+    let sample_json = include_str!("fixtures/src_consolidado_exemplo.json");
+    research_hub_lib::src_domain::import(&mut conn, sample_json, temp.path()).unwrap();
+    let expected_json = research_hub_lib::src_domain::export(&conn).unwrap();
+    let expected_bytes = expected_json.clone().into_bytes();
+
+    let mut cfg = sync_domain::SyncConfigFile::default();
+    cfg.project_mut("src").repo = "rafaeldeps/src-sync".into();
+    cfg.project_mut("src").branch = "main".into();
+    cfg.project_mut("src").path = "dados/src_consolidado.json".into();
+    sync_domain::save_config(temp.path(), &cfg).unwrap();
+
+    // 1. Upload do SRC criando uma NOVA branch (US1 + US3)
+    Mock::given(method("GET"))
+        .and(path("/repos/rafaeldeps/src-sync/git/ref/heads/update/src-2026"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/repos/rafaeldeps/src-sync/git/blobs"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({"sha": "blob_src_1"})))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/rafaeldeps/src-sync/git/ref/heads/main"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"object": {"sha": "base_main_src"}})))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/repos/rafaeldeps/src-sync/git/trees"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({"sha": "tree_src_1"})))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/repos/rafaeldeps/src-sync/git/commits"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+            "sha": "commit_src_1",
+            "html_url": "https://github.com/rafaeldeps/src-sync/commit/commit_src_1"
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/repos/rafaeldeps/src-sync/git/refs"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+            "ref": "refs/heads/update/src-2026",
+            "object": { "sha": "commit_src_1" }
+        })))
+        .mount(&server)
+        .await;
+
+    let opts = UploadBranchOptions {
+        create_new_branch: true,
+        base_branch: Some("main".into()),
+        new_branch: Some("update/src-2026".into()),
+        target_branch: None,
+    };
+
+    let res = upload_horizon_export_with_options(
+        expected_bytes.clone(),
+        temp.path(),
+        "src",
+        false,
+        &opts,
+        &client,
+        no_progress(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(res.commit_sha, "commit_src_1");
+    assert_eq!(res.branch, "update/src-2026");
+    assert!(res.created_branch);
+    assert!(!res.replaced);
+
+    // Verifica paridade byte a byte (SC-003) e preserva a branch base em sync_config.json (FR-005)
+    let requests = server.received_requests().await.unwrap();
+    let blob_req = requests
+        .iter()
+        .find(|r| r.url.path() == "/repos/rafaeldeps/src-sync/git/blobs")
+        .unwrap();
+    let blob_json: serde_json::Value = serde_json::from_slice(&blob_req.body).unwrap();
+    let b64 = blob_json["content"].as_str().unwrap();
+    let sent_bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64).unwrap();
+    assert_eq!(sent_bytes, expected_bytes);
+
+    let reloaded = sync_domain::load_config(temp.path()).unwrap();
+    assert_eq!(reloaded.project("src").unwrap().branch, "main");
 }
 
 #[tokio::test]
@@ -867,13 +954,31 @@ async fn auditoria_de_vazamento_nenhum_erro_contem_token_ou_pii() {
             .unwrap_err(),
     );
 
-    // 5. sync_policy (SRC bloqueado)
-    errors.push(sync_domain::check_upload_allowed("src").unwrap_err());
-
-    // 6. sync_config (validações de repo, branch, path)
+    // 5. sync_config (projeto desconhecido + validações de repo, branch, path)
+    errors.push(sync_domain::check_upload_allowed("projeto_invalido").unwrap_err());
     errors.push(sync_domain::validate_repo("invalid").unwrap_err());
     errors.push(sync_domain::validate_branch("").unwrap_err());
     errors.push(sync_domain::validate_path("horizon", "bad.tar").unwrap_err());
+    errors.push(sync_domain::validate_path("src", "bad.zip").unwrap_err());
+
+    // 6. list_branches e create_branch_ref (SEP-038, SC-004)
+    Mock::given(method("GET"))
+        .and(path("/repos/a/b/branches"))
+        .respond_with(ResponseTemplate::new(403))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/repos/a/b/git/refs"))
+        .respond_with(ResponseTemplate::new(403))
+        .mount(&server)
+        .await;
+    errors.push(auth_client.list_branches("a", "b").await.unwrap_err());
+    errors.push(
+        auth_client
+            .create_branch_ref("a", "b", "update/audit", "sha123")
+            .await
+            .unwrap_err(),
+    );
 
     // 7. not_found
     Mock::given(method("GET"))
@@ -1577,4 +1682,286 @@ async fn upload_egressos_dados_repo_publica_39_blobs_em_commit_unico_atomico() {
     assert!(entries.iter().any(|e| e["path"] == "alunos.json"));
     assert!(entries.iter().any(|e| e["path"] == "data/egressos_perfil.json"));
 }
+
+// --------------------------------------------------------- SEP-038 (T006, T014)
+
+#[tokio::test]
+async fn upload_cria_nova_branch_via_post_git_refs_e_recusa_branch_existente_com_conflict() {
+    use research_hub_lib::sync_domain::UploadBranchOptions;
+    use research_hub_lib::sync_github::upload_horizon_export_with_options;
+
+    let server = MockServer::start().await;
+    let temp = tempfile::tempdir().unwrap();
+    let mut cfg = sync_domain::SyncConfigFile::default();
+    cfg.project_mut("horizon").repo = "a/b".into();
+    cfg.project_mut("horizon").branch = "main".into();
+    cfg.project_mut("horizon").path = "exports/exports_canonical.zip".into();
+    sync_domain::save_config(temp.path(), &cfg).unwrap();
+
+    // 1. Se a branch informada em "Criar nova branch" já existir (200), aborta com Conflict antes de enviar blobs
+    Mock::given(method("GET"))
+        .and(path("/repos/a/b/git/ref/heads/branch-ja-existe"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "object": { "sha": "sha_existente" }
+        })))
+        .mount(&server)
+        .await;
+
+    let opts_conflict = UploadBranchOptions {
+        create_new_branch: true,
+        base_branch: Some("main".into()),
+        new_branch: Some("branch-ja-existe".into()),
+        target_branch: None,
+    };
+    let err = upload_horizon_export_with_options(
+        vec![1, 2, 3],
+        temp.path(),
+        "horizon",
+        false,
+        &opts_conflict,
+        &client(&server, Some("ghp_token")),
+        no_progress(),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(wire(&err)["kind"], "conflict");
+    assert!(err.to_string().contains("branch-ja-existe"));
+
+    // 2. Com new_branch em branco, gera update/horizon-<timestamp> automaticamente e cria via POST /git/refs
+    let server2 = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/repos/a/b/git/ref/heads/main"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "object": { "sha": "base_main_sha" }
+        })))
+        .mount(&server2)
+        .await;
+    // Qualquer consulta de ref para a nova branch update/horizon-* retorna 404 (ainda não existe)
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server2)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/repos/a/b/git/blobs"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({"sha": "b_new"})))
+        .mount(&server2)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/repos/a/b/git/trees"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({"sha": "t_new"})))
+        .mount(&server2)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/repos/a/b/git/commits"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+            "sha": "c_new_branch",
+            "html_url": "https://github.com/a/b/commit/c_new_branch"
+        })))
+        .mount(&server2)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/repos/a/b/git/refs"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+            "ref": "refs/heads/update/horizon-auto",
+            "object": { "sha": "c_new_branch" }
+        })))
+        .mount(&server2)
+        .await;
+
+    let opts_auto = UploadBranchOptions {
+        create_new_branch: true,
+        base_branch: None,
+        new_branch: None,
+        target_branch: None,
+    };
+    let res = upload_horizon_export_with_options(
+        vec![10, 20, 30],
+        temp.path(),
+        "horizon",
+        false,
+        &opts_auto,
+        &client(&server2, Some("ghp_token")),
+        no_progress(),
+    )
+    .await
+    .unwrap();
+
+    assert!(res.created_branch);
+    assert!(res.branch.starts_with("update/horizon-"));
+    assert_eq!(res.commit_sha, "c_new_branch");
+
+    let reqs = server2.received_requests().await.unwrap();
+    assert!(reqs.iter().any(|r| r.method.as_str() == "POST" && r.url.path() == "/repos/a/b/git/refs"));
+    assert!(!reqs.iter().any(|r| r.method.as_str() == "PATCH"));
+}
+
+#[tokio::test]
+async fn list_branches_retorna_branches_remotas_e_upload_aceita_branch_base_ou_destino_alem_da_main() {
+    use research_hub_lib::sync_domain::UploadBranchOptions;
+    use research_hub_lib::sync_github::{list_project_branches, upload_horizon_export_with_options};
+
+    let server = MockServer::start().await;
+    let temp = tempfile::tempdir().unwrap();
+    let mut cfg = sync_domain::SyncConfigFile::default();
+    cfg.project_mut("horizon").repo = "a/b".into();
+    cfg.project_mut("horizon").branch = "main".into();
+    cfg.project_mut("horizon").path = "exports/exports_canonical.zip".into();
+    sync_domain::save_config(temp.path(), &cfg).unwrap();
+
+    Mock::given(method("GET"))
+        .and(path("/repos/a/b/branches"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            { "name": "main", "commit": { "sha": "sha_main_111" } },
+            { "name": "develop", "commit": { "sha": "sha_dev_222" } },
+            { "name": "curadoria-2026", "commit": { "sha": "sha_cur_333" } }
+        ])))
+        .mount(&server)
+        .await;
+
+    let gh = client(&server, Some("ghp_token"));
+    let branches = list_project_branches(temp.path(), "horizon", None, &gh).await.unwrap();
+    assert_eq!(branches.len(), 3);
+    assert_eq!(branches[0].name, "main");
+    assert_eq!(branches[1].name, "develop");
+    assert_eq!(branches[2].name, "curadoria-2026");
+
+    // Upload no modo "Enviar na branch selecionada" para 'develop' (diferente da main)
+    Mock::given(method("GET")).and(path("/repos/a/b")).respond_with(ResponseTemplate::new(200)).mount(&server).await;
+    Mock::given(method("GET"))
+        .and(path("/repos/a/b/git/ref/heads/develop"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "object": { "sha": "sha_dev_222" }
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/a/b/contents/exports/exports_canonical.zip"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/repos/a/b/git/blobs"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({"sha": "b_dev"})))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/repos/a/b/git/trees"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({"sha": "t_dev"})))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/repos/a/b/git/commits"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+            "sha": "c_dev_999",
+            "html_url": "https://github.com/a/b/commit/c_dev_999"
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path("/repos/a/b/git/refs/heads/develop"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let opts_dev = UploadBranchOptions {
+        create_new_branch: false,
+        base_branch: Some("main".into()),
+        new_branch: None,
+        target_branch: Some("develop".into()),
+    };
+    let res_dev = upload_horizon_export_with_options(
+        vec![5, 6, 7],
+        temp.path(),
+        "horizon",
+        false,
+        &opts_dev,
+        &gh,
+        no_progress(),
+    )
+    .await
+    .unwrap();
+
+    assert!(!res_dev.created_branch);
+    assert_eq!(res_dev.branch, "develop");
+    assert_eq!(res_dev.commit_sha, "c_dev_999");
+
+    // FR-008: Se target_branch não existir no remoto ("nova-branch-direta" -> 404), cria a partir de base_branch ("develop")
+    Mock::given(method("GET"))
+        .and(path("/repos/a/b/git/ref/heads/nova-branch-direta"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/repos/a/b/git/refs"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+            "ref": "refs/heads/nova-branch-direta",
+            "object": { "sha": "c_dev_999" }
+        })))
+        .mount(&server)
+        .await;
+
+    let opts_fallback = UploadBranchOptions {
+        create_new_branch: false,
+        base_branch: Some("develop".into()),
+        new_branch: None,
+        target_branch: Some("nova-branch-direta".into()),
+    };
+    let res_fb = upload_horizon_export_with_options(
+        vec![5, 6, 7],
+        temp.path(),
+        "horizon",
+        false,
+        &opts_fallback,
+        &gh,
+        no_progress(),
+    )
+    .await
+    .unwrap();
+
+    assert!(res_fb.created_branch);
+    assert_eq!(res_fb.branch, "nova-branch-direta");
+}
+
+#[tokio::test]
+async fn download_and_upload_horizon_v2_operam_isolados_do_horizon_legacy() {
+    let server = MockServer::start().await;
+    let zip_bytes = canonical_zip(&[("Serra V2", 10), ("Vitoria V2", 20)]);
+    Mock::given(method("GET"))
+        .and(path("/repos/v2/repo/contents/exports/exports_canonical.zip"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(zip_bytes.clone()))
+        .mount(&server)
+        .await;
+
+    let data = tempfile::tempdir().unwrap();
+    let mut conn = db::open_in_memory().unwrap();
+    conn.execute("INSERT INTO campuses (id, name) VALUES (1, 'Legado Intacto')", [])
+        .unwrap();
+
+    let src = file_source("v2", "repo", "main", "exports/exports_canonical.zip");
+    let summary = download_and_import(
+        &mut conn,
+        data.path(),
+        "horizon_v2",
+        &src,
+        &client(&server, None),
+        no_progress(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(summary["total_rows"], 2);
+
+    let hv2_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM hv2_campuses", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(hv2_count, 2);
+
+    let legacy_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM campuses", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(legacy_count, 1);
+    assert!(data.path().join(research_hub_lib::import::HORIZON_V2_ORIGINAL_ARCHIVE).exists());
+    assert!(!data.path().join(research_hub_lib::import::ORIGINAL_ARCHIVE).exists());
+}
+
+
 

@@ -12,9 +12,15 @@ import ProjectSelector from '../../src/components/ProjectSelector.jsx';
 
 const projects = [
   {
-    id: 'horizon',
+    id: 'horizon-v2',
     title: 'Horizon',
-    description: 'Tabelas canônicas do DataLake (15 abas)',
+    description: 'Nova versão das tabelas canônicas do DataLake (15 abas e enriquecimento SIGPesq)',
+    href: '/horizon',
+  },
+  {
+    id: 'horizon',
+    title: 'Horizon Legacy',
+    description: 'Tabelas canônicas legadas do DataLake (15 abas)',
     href: '/dashboard',
   },
   {
@@ -43,24 +49,34 @@ describe('ProjectSelector', () => {
     vi.restoreAllMocks();
   });
 
-  it('renders one distinguishable card per project including Egressos and Egressos — Dados', () => {
+  it('renders one distinguishable card per project including Horizon, Horizon Legacy, SRC, Egressos and Egressos — Dados', () => {
     render(<ProjectSelector projects={projects} onSelect={() => {}} />);
     expect(screen.getByRole('heading', { name: 'Horizon' })).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'Horizon Legacy' })).toBeDefined();
     expect(screen.getByRole('heading', { name: 'SRC' })).toBeDefined();
     expect(screen.getByRole('heading', { name: 'Egressos' })).toBeDefined();
     expect(screen.getByRole('heading', { name: 'Egressos — Dados' })).toBeDefined();
-    expect(screen.getByText(/Tabelas canônicas do DataLake/i)).toBeDefined();
+    expect(screen.getByText(/Nova versão das tabelas canônicas/i)).toBeDefined();
+    expect(screen.getByText(/Tabelas canônicas legadas/i)).toBeDefined();
     expect(screen.getByText(/JSON consolidado do SRC/i)).toBeDefined();
     expect(screen.getByText(/21 tabelas JSON da pasta dados/i)).toBeDefined();
     expect(screen.getByText(/ifesserra-lab/i)).toBeDefined();
   });
 
-  it('includes Egressos and Egressos — Dados in DEFAULT_PROJECTS when rendered without explicit prop', () => {
-    render(<ProjectSelector onSelect={() => {}} />);
+  it('includes Horizon (/horizon), Horizon Legacy (/dashboard), SRC, Egressos and Egressos — Dados in DEFAULT_PROJECTS when rendered without explicit prop', () => {
+    const onSelect = vi.fn();
+    render(<ProjectSelector onSelect={onSelect} />);
     expect(screen.getByRole('heading', { name: 'Horizon' })).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'Horizon Legacy' })).toBeDefined();
     expect(screen.getByRole('heading', { name: 'SRC' })).toBeDefined();
     expect(screen.getByRole('heading', { name: 'Egressos' })).toBeDefined();
     expect(screen.getByRole('heading', { name: 'Egressos — Dados' })).toBeDefined();
+
+    fireEvent.click(screen.getByRole('heading', { name: 'Horizon' }).closest('button'));
+    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ id: 'horizon-v2', title: 'Horizon', href: '/horizon' }));
+
+    fireEvent.click(screen.getByRole('heading', { name: 'Horizon Legacy' }).closest('button'));
+    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ id: 'horizon', title: 'Horizon Legacy', href: '/dashboard' }));
   });
 
   it('reports the chosen project (including Egressos -> /egressos and Egressos — Dados -> /egressos-dados) to the caller', () => {
@@ -68,14 +84,14 @@ describe('ProjectSelector', () => {
     render(<ProjectSelector projects={projects} onSelect={onSelect} />);
     fireEvent.click(screen.getByRole('button', { name: /Egressos — Dados/i }));
     expect(onSelect).toHaveBeenCalledTimes(1);
-    expect(onSelect).toHaveBeenCalledWith(projects[3]);
+    expect(onSelect).toHaveBeenCalledWith(projects[4]);
   });
 
   it('asks before switching when there are unsaved changes and blocks on cancel', () => {
     const onSelect = vi.fn();
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
     render(<ProjectSelector projects={projects} onSelect={onSelect} pendingWarning />);
-    fireEvent.click(screen.getByRole('button', { name: /Horizon/i }));
+    fireEvent.click(screen.getByRole('heading', { name: 'Horizon Legacy' }).closest('button'));
     expect(confirmSpy).toHaveBeenCalledTimes(1);
     expect(onSelect).not.toHaveBeenCalled();
   });
@@ -84,7 +100,7 @@ describe('ProjectSelector', () => {
     const onSelect = vi.fn();
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     render(<ProjectSelector projects={projects} onSelect={onSelect} pendingWarning />);
-    fireEvent.click(screen.getByRole('button', { name: /Horizon/i }));
+    fireEvent.click(screen.getByRole('heading', { name: 'Horizon' }).closest('button'));
     expect(onSelect).toHaveBeenCalledWith(projects[0]);
   });
 

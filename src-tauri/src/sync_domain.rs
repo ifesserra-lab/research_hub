@@ -28,13 +28,121 @@ pub struct SyncProgress {
 /// Arquivo de configuração no app-data (research R4).
 pub const SYNC_CONFIG_FILE: &str = "sync_config.json";
 
-/// Projetos conhecidos. O envio do SRC é bloqueado por política (FR-005),
-/// enquanto Horizon, Egressos (SEP-035) e Egressos-Dados (SEP-037) permitem download e envio.
-pub const PROJECTS: [&str; 4] = ["horizon", "src", "egressos", "egressos_dados"];
+/// Projetos conhecidos. A partir da SEP-039, todos os 5 projetos suportados
+/// (`horizon`, `horizon_v2`, `src`, `egressos` e `egressos_dados`) permitem download e envio.
+pub const PROJECTS: [&str; 5] = ["horizon", "horizon_v2", "src", "egressos", "egressos_dados"];
 
 pub const DEFAULT_EGRESSOS_DADOS_REPO: &str = "ifesserra-lab/egressos-dados";
 pub const DEFAULT_EGRESSOS_DADOS_BRANCH: &str = "main";
 pub const DEFAULT_EGRESSOS_DADOS_PATH: &str = ".";
+
+/// Representa uma branch existente em um repositório GitHub consultado via API (`SEP-038`).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct RemoteBranchInfo {
+    pub name: String,
+    pub commit_sha: String,
+}
+
+/// Parâmetros opcionais de controle de branch enviados no momento do upload (`SEP-038`).
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+pub struct UploadBranchOptions {
+    #[serde(default)]
+    pub create_new_branch: bool,
+    #[serde(default)]
+    pub base_branch: Option<String>,
+    #[serde(default)]
+    pub new_branch: Option<String>,
+    #[serde(default)]
+    pub target_branch: Option<String>,
+}
+
+/// Plano de branch resolvido e validado para uma operação de upload (`SEP-038`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedBranchPlan {
+    pub create_new_branch: bool,
+    pub base_branch: String,
+    pub publish_branch: String,
+}
+
+impl UploadBranchOptions {
+    /// Resolve qual branch servirá de base (`base_branch`) e em qual branch o
+    /// commit será publicado (`publish_branch`), validando ambas.
+    pub fn resolve(
+        &self,
+        project: &str,
+        configured_branch: &str,
+    ) -> Result<ResolvedBranchPlan, AppError> {
+        let default_base = if configured_branch.trim().is_empty() {
+            "main"
+        } else {
+            configured_branch.trim()
+        };
+
+        if self.create_new_branch {
+            let base_branch = self
+                .base_branch
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(default_base)
+                .to_string();
+            validate_branch(&base_branch)?;
+
+            let publish_branch = self
+                .new_branch
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .unwrap_or_else(|| generate_branch_name(project));
+            validate_branch(&publish_branch)?;
+
+            Ok(ResolvedBranchPlan {
+                create_new_branch: true,
+                base_branch,
+                publish_branch,
+            })
+        } else {
+            let base_branch = self
+                .base_branch
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(default_base)
+                .to_string();
+            validate_branch(&base_branch)?;
+
+            let publish_branch = self
+                .target_branch
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(default_base)
+                .to_string();
+            validate_branch(&publish_branch)?;
+
+            Ok(ResolvedBranchPlan {
+                create_new_branch: false,
+                base_branch,
+                publish_branch,
+            })
+        }
+    }
+}
+
+/// Gera um nome de branch válido e determinístico com prefixo `update/{project}-{timestamp}` (`SEP-038`).
+pub fn generate_branch_name(project: &str) -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let clean_project = if project.trim().is_empty() {
+        "dados"
+    } else {
+        project.trim()
+    };
+    format!("update/{clean_project}-{secs}")
+}
 
 /// Destino/envio de UM projeto (FR-004: configurações separadas — os
 /// repositórios dos dois projetos são gits separados).
@@ -117,20 +225,25 @@ pub fn validate_repo(repo: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Branch não vazia, sem espaços, sem começar com `-` (data-model.md).
+/// Branch não vazia, sem espaços, sem `..`, sem começar com `-` ou `/`, nem terminar com `/` ou `.lock` (data-model.md).
 pub fn validate_branch(branch: &str) -> Result<(), AppError> {
-    if branch.trim().is_empty()
+    let trimmed = branch.trim();
+    if trimmed.is_empty()
         || branch.split_whitespace().count() != 1
-        || branch.starts_with('-')
+        || trimmed.starts_with('-')
+        || trimmed.starts_with('/')
+        || trimmed.ends_with('/')
+        || trimmed.ends_with(".lock")
+        || trimmed.contains("..")
     {
         return Err(AppError::SyncConfig(
-            "Branch não pode ficar vazia, conter espaços ou começar com '-'.".into(),
+            "Branch não pode ficar vazia, conter espaços ou '..', começar com '-' ou '/', nem terminar com '/' ou '.lock'.".into(),
         ));
     }
     Ok(())
 }
 
-/// Caminho não vazio, sem `..`, e `.zip` para o Horizon (data-model.md).
+/// Caminho não vazio, sem `..`, `.zip` para o Horizon e `.json` para o SRC (data-model.md).
 pub fn validate_path(project: &str, path: &str) -> Result<(), AppError> {
     if path.trim().is_empty() {
         return Err(AppError::SyncConfig(
@@ -142,9 +255,16 @@ pub fn validate_path(project: &str, path: &str) -> Result<(), AppError> {
             "Caminho não pode conter '..'.".into(),
         ));
     }
-    if project == "horizon" && !path.to_ascii_lowercase().ends_with(".zip") {
+    if (project == "horizon" || project == "horizon_v2")
+        && !path.to_ascii_lowercase().ends_with(".zip")
+    {
         return Err(AppError::SyncConfig(
             "O export do Horizon é o zip canônico: o caminho deve terminar em '.zip'.".into(),
+        ));
+    }
+    if project == "src" && !path.to_ascii_lowercase().ends_with(".json") {
+        return Err(AppError::SyncConfig(
+            "O export do SRC é o JSON consolidado: o caminho deve terminar em '.json'.".into(),
         ));
     }
     Ok(())
@@ -171,18 +291,12 @@ pub fn ensure_known_project(project: &str) -> Result<(), AppError> {
     }
 }
 
-/// Política de dados pessoais para o envio (FR-005, decisão Option B): o
-/// consolidado do SRC contém PII direta e NÃO sobe nesta entrega — erro SEM
-/// qualquer chamada de rede. Horizon e Egressos (SEP-035, FR-012) são permitidos.
+/// Política de envio para o GitHub (`SEP-038` / `SEP-039`): todos os 5
+/// programas suportados (`horizon`, `horizon_v2`, `src`, `egressos` e `egressos_dados`) estão
+/// autorizados a publicar seus exports no GitHub.
 pub fn check_upload_allowed(project: &str) -> Result<(), AppError> {
     match project {
-        "horizon" | "egressos" | "egressos_dados" => Ok(()),
-        "src" => Err(AppError::SyncPolicy(
-            "O consolidado do SRC contém dados pessoais (CPF, e-mail) e não \
-             pode ser enviado ao GitHub nesta versão. O export local continua \
-             disponível normalmente."
-                .into(),
-        )),
+        "horizon" | "horizon_v2" | "src" | "egressos" | "egressos_dados" => Ok(()),
         other => Err(AppError::SyncConfig(format!(
             "Projeto desconhecido: {other}"
         ))),
@@ -233,6 +347,13 @@ impl NormalizedSource {
     }
 }
 
+fn is_namespaced_branch_prefix(segment: &str) -> bool {
+    matches!(
+        segment,
+        "update" | "feature" | "fix" | "hotfix" | "release"
+    )
+}
+
 /// Aceita as três formas declaradas na spec (raw, blob, release asset) e
 /// normaliza para a Contents/Assets API. Qualquer outra URL → `validation`.
 pub fn normalize_url(url: &str) -> Result<NormalizedSource, AppError> {
@@ -258,21 +379,35 @@ pub fn normalize_url(url: &str) -> Result<NormalizedSource, AppError> {
                     "URL raw esperada: https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{caminho}".into(),
                 ));
             }
+            let (reference, path) = if is_namespaced_branch_prefix(&segments[2]) && segments.len() >= 5 {
+                (
+                    format!("{}/{}", segments[2], segments[3]),
+                    segments[4..].join("/"),
+                )
+            } else {
+                (segments[2].clone(), segments[3..].join("/"))
+            };
             Ok(NormalizedSource::File {
                 owner: segments[0].clone(),
                 repo: segments[1].clone(),
-                reference: segments[2].clone(),
-                path: segments[3..].join("/"),
+                reference,
+                path,
             })
         }
         Some("github.com") => {
             match segments.as_slice() {
                 [owner, repo, kind, reference, path @ ..] if kind == "blob" && !path.is_empty() => {
+                    let (resolved_ref, resolved_path) =
+                        if is_namespaced_branch_prefix(reference) && path.len() >= 2 {
+                            (format!("{}/{}", reference, path[0]), path[1..].join("/"))
+                        } else {
+                            (reference.clone(), path.join("/"))
+                        };
                     Ok(NormalizedSource::File {
                         owner: owner.clone(),
                         repo: repo.clone(),
-                        reference: reference.clone(),
-                        path: path.join("/"),
+                        reference: resolved_ref,
+                        path: resolved_path,
                     })
                 }
                 [owner, repo, k1, k2, tag, asset] if k1 == "releases" && k2 == "download" => {
@@ -335,12 +470,29 @@ pub fn normalize_egressos_source(url: &str) -> Result<EgressosDirSource, AppErro
             reference.clone(),
             "dados".to_string(),
         ),
-        [owner, repo, kind, reference, dir_parts @ ..] if kind == "tree" && !dir_parts.is_empty() => (
-            owner.clone(),
-            repo.trim_end_matches(".git").to_string(),
-            reference.clone(),
-            dir_parts.join("/"),
-        ),
+        [owner, repo, kind, reference, dir_parts @ ..] if kind == "tree" && !dir_parts.is_empty() => {
+            if is_namespaced_branch_prefix(reference) {
+                let full_ref = format!("{}/{}", reference, dir_parts[0]);
+                let resolved_dir = if dir_parts.len() == 1 {
+                    "dados".to_string()
+                } else {
+                    dir_parts[1..].join("/")
+                };
+                (
+                    owner.clone(),
+                    repo.trim_end_matches(".git").to_string(),
+                    full_ref,
+                    resolved_dir,
+                )
+            } else {
+                (
+                    owner.clone(),
+                    repo.trim_end_matches(".git").to_string(),
+                    reference.clone(),
+                    dir_parts.join("/"),
+                )
+            }
+        }
         _ => {
             return Err(AppError::Validation(
                 "URL do Egressos esperada: https://github.com/{owner}/{repo}/tree/{branch}/{pasta} ou https://github.com/{owner}/{repo}".into(),
@@ -397,18 +549,38 @@ pub fn normalize_egressos_dados_source(url: &str) -> Result<EgressosDirSource, A
             ".".to_string(),
         ),
         [owner, repo, kind, reference, dir_parts @ ..] if kind == "tree" && !dir_parts.is_empty() => {
-            let joined = dir_parts.join("/");
-            let normalized_dir = if joined == "data" {
-                ".".to_string()
+            if is_namespaced_branch_prefix(reference) {
+                let full_ref = format!("{}/{}", reference, dir_parts[0]);
+                let rem = if dir_parts.len() == 1 {
+                    ".".to_string()
+                } else {
+                    let joined = dir_parts[1..].join("/");
+                    if joined == "data" {
+                        ".".to_string()
+                    } else {
+                        joined
+                    }
+                };
+                (
+                    owner.clone(),
+                    repo.trim_end_matches(".git").to_string(),
+                    full_ref,
+                    rem,
+                )
             } else {
-                joined
-            };
-            (
-                owner.clone(),
-                repo.trim_end_matches(".git").to_string(),
-                reference.clone(),
-                normalized_dir,
-            )
+                let joined = dir_parts.join("/");
+                let normalized_dir = if joined == "data" {
+                    ".".to_string()
+                } else {
+                    joined
+                };
+                (
+                    owner.clone(),
+                    repo.trim_end_matches(".git").to_string(),
+                    reference.clone(),
+                    normalized_dir,
+                )
+            }
         }
         _ => {
             return Err(AppError::Validation(
@@ -778,10 +950,69 @@ mod tests {
         assert_eq!(validate_branch("").unwrap_err().kind(), "sync_config");
         assert_eq!(validate_branch("duas palavras").unwrap_err().kind(), "sync_config");
         assert_eq!(validate_branch("-flag").unwrap_err().kind(), "sync_config");
+        assert_eq!(validate_branch("/inicio").unwrap_err().kind(), "sync_config");
+        assert_eq!(validate_branch("fim/").unwrap_err().kind(), "sync_config");
+        assert_eq!(validate_branch("branch.lock").unwrap_err().kind(), "sync_config");
+        assert_eq!(validate_branch("a..b").unwrap_err().kind(), "sync_config");
     }
 
     #[test]
-    fn path_valida_regras_e_zip_no_horizon() {
+    fn generate_branch_name_e_upload_branch_options_resolve_seguem_regras_sep038() {
+        let generated = generate_branch_name("horizon");
+        assert!(generated.starts_with("update/horizon-"));
+        assert!(validate_branch(&generated).is_ok());
+
+        // Modo criar nova branch com nome em branco -> gera update/<project>-<stamp>
+        let opts_auto = UploadBranchOptions {
+            create_new_branch: true,
+            base_branch: None,
+            new_branch: Some("   ".into()),
+            target_branch: None,
+        };
+        let resolved_auto = opts_auto.resolve("src", "main").unwrap();
+        assert!(resolved_auto.create_new_branch);
+        assert_eq!(resolved_auto.base_branch, "main");
+        assert!(resolved_auto.publish_branch.starts_with("update/src-"));
+
+        // Modo criar nova branch com base_branch customizada e new_branch explícita
+        let opts_custom = UploadBranchOptions {
+            create_new_branch: true,
+            base_branch: Some("develop".into()),
+            new_branch: Some("curadoria/lote-1".into()),
+            target_branch: None,
+        };
+        let resolved_custom = opts_custom.resolve("egressos", "main").unwrap();
+        assert!(resolved_custom.create_new_branch);
+        assert_eq!(resolved_custom.base_branch, "develop");
+        assert_eq!(resolved_custom.publish_branch, "curadoria/lote-1");
+
+        // Modo enviar na branch selecionada
+        let opts_existing = UploadBranchOptions {
+            create_new_branch: false,
+            base_branch: None,
+            new_branch: None,
+            target_branch: Some("homologacao".into()),
+        };
+        let resolved_existing = opts_existing.resolve("egressos_dados", "main").unwrap();
+        assert!(!resolved_existing.create_new_branch);
+        assert_eq!(resolved_existing.base_branch, "main");
+        assert_eq!(resolved_existing.publish_branch, "homologacao");
+
+        // Nome inválido de nova branch -> sync_config
+        let opts_invalid = UploadBranchOptions {
+            create_new_branch: true,
+            base_branch: Some("main".into()),
+            new_branch: Some("branch invalida com espaco".into()),
+            target_branch: None,
+        };
+        assert_eq!(
+            opts_invalid.resolve("horizon", "main").unwrap_err().kind(),
+            "sync_config"
+        );
+    }
+
+    #[test]
+    fn path_valida_regras_zip_no_horizon_e_json_no_src() {
         assert!(validate_path("horizon", "exports/exports_canonical.zip").is_ok());
         assert_eq!(
             validate_path("horizon", "exports/consolidado.json").unwrap_err().kind(),
@@ -791,19 +1022,23 @@ mod tests {
             validate_path("horizon", "a/../b.zip").unwrap_err().kind(),
             "sync_config"
         );
-        // SRC exporta JSON local; o path aqui é de download livre.
+        // SEP-038 (FR-003): SRC agora faz upload do JSON consolidado e exige .json
         assert!(validate_path("src", "dados/consolidado.json").is_ok());
+        assert_eq!(
+            validate_path("src", "dados/consolidado.zip").unwrap_err().kind(),
+            "sync_config"
+        );
         assert_eq!(validate_path("src", "").unwrap_err().kind(), "sync_config");
     }
 
     // ------------------------------------------------------------ política
 
     #[test]
-    fn envio_do_src_e_bloqueado_por_politica_e_horizon_livre() {
+    fn envio_dos_quatro_projetos_e_permitido_incluindo_src() {
         assert!(check_upload_allowed("horizon").is_ok());
-        let err = check_upload_allowed("src").unwrap_err();
-        assert_eq!(err.kind(), "sync_policy");
-        assert!(err.to_string().contains("dados pessoais"));
+        assert!(check_upload_allowed("src").is_ok());
+        assert!(check_upload_allowed("egressos").is_ok());
+        assert!(check_upload_allowed("egressos_dados").is_ok());
         assert_eq!(
             check_upload_allowed("outro").unwrap_err().kind(),
             "sync_config"
@@ -971,6 +1206,56 @@ mod tests {
         )
         .unwrap();
         assert_eq!(s2.dir, ".");
+
+        let s3 = normalize_egressos_dados_source(
+            "https://github.com/ifesserra-lab/egressos-dados/tree/update/egressos_dados-20261105-150000",
+        )
+        .unwrap();
+        assert_eq!(s3.reference, "update/egressos_dados-20261105-150000");
+        assert_eq!(s3.dir, ".");
+
+        let s4 = normalize_egressos_source(
+            "https://github.com/thiagodeps/egressos/tree/update/egressos-20261105-150000/dados",
+        )
+        .unwrap();
+        assert_eq!(s4.reference, "update/egressos-20261105-150000");
+        assert_eq!(s4.dir, "dados");
+
+        let s5 = normalize_url(
+            "https://raw.githubusercontent.com/owner/src-repo/update/src-20261105-150000/dados/src_consolidado.json",
+        )
+        .unwrap();
+        assert_eq!(
+            s5,
+            NormalizedSource::File {
+                owner: "owner".into(),
+                repo: "src-repo".into(),
+                reference: "update/src-20261105-150000".into(),
+                path: "dados/src_consolidado.json".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn horizon_v2_project_is_supported_and_isolated_from_horizon_legacy() {
+        assert!(PROJECTS.contains(&"horizon_v2"));
+        assert!(ensure_known_project("horizon_v2").is_ok());
+        assert!(check_upload_allowed("horizon_v2").is_ok());
+        assert!(validate_path("horizon_v2", "exports/exports_canonical.zip").is_ok());
+        assert_eq!(
+            validate_path("horizon_v2", "exports/dados.json").unwrap_err().kind(),
+            "sync_config"
+        );
+
+        let d = dir();
+        set_project_config(d.path(), "horizon", "legacy/repo", "main", "legacy.zip").unwrap();
+        set_project_config(d.path(), "horizon_v2", "v2/repo", "develop", "exports_canonical.zip")
+            .unwrap();
+
+        let loaded = load_config(d.path()).unwrap();
+        assert_eq!(loaded.project("horizon").unwrap().repo, "legacy/repo");
+        assert_eq!(loaded.project("horizon_v2").unwrap().repo, "v2/repo");
+        assert_eq!(loaded.project("horizon_v2").unwrap().branch, "develop");
     }
 }
 

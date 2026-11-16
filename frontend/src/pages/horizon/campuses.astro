@@ -1,0 +1,22 @@
+---
+import HorizonDashboard from '../../layouts/HorizonDashboard.astro';
+import EntityPage from '../../components/EntityPage.jsx';
+---
+
+<HorizonDashboard>
+  <EntityPage
+    client:load
+    entity="campuses"
+    apiPrefix="/horizon-v2"
+    basePath="/horizon"
+    columns={['id', 'name', 'short_name', 'organization_id']}
+    fields={[
+      { name: 'id', label: 'ID', type: 'number' },
+      { name: 'name', label: 'Nome', required: true },
+      { name: 'description', label: 'Descrição' },
+      { name: 'short_name', label: 'Sigla' },
+      { name: 'organization_id', label: 'Organização (ID)', type: 'number' },
+      { name: 'parent_id', label: 'Campus Pai (ID)', type: 'number' }
+    ]}
+  />
+</HorizonDashboard>

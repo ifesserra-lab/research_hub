@@ -4,6 +4,10 @@ import {
   onEgressosDadosImportProgress,
   onSyncProgress,
 } from '../services/api.js';
+import {
+  buildSuggestedBranchName,
+  replaceBranchInGitHubUrl,
+} from './SyncPanel.jsx';
 
 const DEFAULT_LOCAL_REPO_PATH = '/home/thiagodeps/egressos-dados';
 
@@ -16,7 +20,7 @@ export default function EgressosDadosDataControl() {
   const [message, setMessage] = useState(null);
   const [progress, setProgress] = useState(null);
 
-  // Sincronização GitHub (`ifesserra-lab/egressos-dados` — US4, FR-010)
+  // Sincronização GitHub (`ifesserra-lab/egressos-dados` — US4, FR-010, SEP-038)
   const [syncConfig, setSyncConfig] = useState({
     repo: 'ifesserra-lab/egressos-dados',
     branch: 'main',
@@ -24,6 +28,14 @@ export default function EgressosDadosDataControl() {
     has_token: true,
     token_hint: null,
   });
+  const [availableBranches, setAvailableBranches] = useState(['main']);
+  const [newlyDetectedBranches, setNewlyDetectedBranches] = useState([]);
+  const [remoteBranchShas, setRemoteBranchShas] = useState({});
+  const [loadingBranches, setLoadingBranches] = useState(false);
+  const [branchMode, setBranchMode] = useState('create');
+  const [newBranchName, setNewBranchName] = useState(() =>
+    buildSuggestedBranchName('egressos_dados')
+  );
   const [sourceUrl, setSourceUrl] = useState(
     'https://github.com/ifesserra-lab/egressos-dados/tree/main'
   );
@@ -239,26 +251,128 @@ export default function EgressosDadosDataControl() {
     }
   }
 
+  function handleSelectBranch(selectedBranch) {
+    if (!selectedBranch) return;
+    setSyncConfig((prev) => ({ ...prev, branch: selectedBranch }));
+    setSourceUrl((prevUrl) => replaceBranchInGitHubUrl(prevUrl, selectedBranch));
+  }
+
+  async function handleLoadBranches(options = {}) {
+    const isSilent = Boolean(options && options.silent === true);
+    const createdBranch =
+      options && typeof options.createdBranch === 'string' ? options.createdBranch : null;
+
+    setLoadingBranches(true);
+    if (!isSilent) {
+      setSyncFeedback(null);
+    }
+    try {
+      const repoParam = syncConfig.repo.trim() || 'ifesserra-lab/egressos-dados';
+      const list = await apiFetch(
+        `/egressos-dados/sync/branches?repo=${encodeURIComponent(repoParam)}`
+      );
+      if (!Array.isArray(list)) {
+        return;
+      }
+      const names = list.map((b) => b?.name).filter(Boolean);
+      const shaMap = {};
+      for (const item of list) {
+        if (item?.name && item?.commit_sha) {
+          shaMap[item.name] = item.commit_sha;
+        }
+      }
+      setRemoteBranchShas((prev) => ({ ...prev, ...shaMap }));
+
+      const detectedNew = names.filter((n) => !availableBranches.includes(n));
+      const allNew = Array.from(
+        new Set([...(createdBranch ? [createdBranch] : []), ...detectedNew])
+      );
+      if (allNew.length > 0) {
+        setNewlyDetectedBranches((prev) => Array.from(new Set([...allNew, ...prev])));
+      }
+
+      const merged = Array.from(
+        new Set([
+          syncConfig.branch || 'main',
+          'main',
+          ...(createdBranch ? [createdBranch] : []),
+          ...names,
+        ])
+      );
+      setAvailableBranches(merged);
+
+      if (!isSilent) {
+        setSyncFeedback({
+          type: 'success',
+          text:
+            detectedNew.length > 0
+              ? `Branches sincronizadas com o GitHub (${names.length} encontradas). Novas branches detectadas: ${detectedNew.join(', ')}`
+              : `Branches atualizadas do GitHub (${names.length} disponíveis: ${names.join(', ') || 'main'}).`,
+        });
+      }
+    } catch (err) {
+      if (!isSilent) {
+        setSyncFeedback({
+          type: 'error',
+          text: err?.message ?? String(err),
+        });
+      }
+    } finally {
+      setLoadingBranches(false);
+    }
+  }
+
   async function handleGitHubUpload() {
     setSyncBusy(true);
     setSyncFeedback(null);
     setSyncProgress(null);
     try {
+      const createNewBranch = branchMode === 'create';
+      const baseBranch = syncConfig.branch.trim() || 'main';
       const res = await apiFetch('/egressos-dados/sync/upload', {
         method: 'POST',
         body: JSON.stringify({
           confirmOverwrite: true,
           commitMessage: commitMessage.trim() || null,
+          createNewBranch,
+          baseBranch,
+          newBranch: createNewBranch ? newBranchName.trim() || null : null,
+          targetBranch: createNewBranch ? null : baseBranch,
         }),
       });
+      const publishedBranch =
+        res?.branch || (createNewBranch ? newBranchName.trim() : baseBranch);
+      if (publishedBranch) {
+        setAvailableBranches((prev) =>
+          prev.includes(publishedBranch) ? prev : [...prev, publishedBranch]
+        );
+        if (res?.created_branch) {
+          setNewlyDetectedBranches((prev) =>
+            prev.includes(publishedBranch) ? prev : [publishedBranch, ...prev]
+          );
+        }
+        if (res?.commit_sha) {
+          setRemoteBranchShas((prev) => ({ ...prev, [publishedBranch]: res.commit_sha }));
+        }
+      }
+      if (createNewBranch) {
+        setNewBranchName(buildSuggestedBranchName('egressos_dados'));
+      }
       setSyncFeedback({
         type: 'success',
-        text: `Publicação concluída no GitHub (${syncConfig.repo}@${syncConfig.branch}) — commit ${res.commit_sha?.slice(0, 7) || res.commit_sha}.`,
+        text: `Publicação concluída no GitHub (${syncConfig.repo}@${publishedBranch}${
+          res?.created_branch ? ' — nova branch criada' : ''
+        }) — commit ${res.commit_sha?.slice(0, 7) || res.commit_sha}.`,
         url: res.html_url,
+        canRefreshBranches: true,
       });
       window.dispatchEvent(
         new CustomEvent('egressos-dados:dirty', { detail: false })
       );
+      await handleLoadBranches({
+        silent: true,
+        createdBranch: res?.created_branch ? publishedBranch : null,
+      });
     } catch (err) {
       setSyncFeedback({
         type: 'error',
@@ -466,12 +580,23 @@ export default function EgressosDadosDataControl() {
             />
           </div>
           <div>
-            <label
-              htmlFor="sync-branch-input"
-              className="block text-xs font-semibold text-slate-700 mb-1"
-            >
-              Branch
-            </label>
+            <div className="flex items-center justify-between mb-1">
+              <label
+                htmlFor="sync-branch-input"
+                className="block text-xs font-semibold text-slate-700"
+              >
+                Branch
+              </label>
+              <button
+                type="button"
+                aria-label="Carregar branches / Atualizar branches"
+                onClick={() => handleLoadBranches({ silent: false })}
+                disabled={syncBusy || loadingBranches}
+                className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-600 hover:text-blue-800 underline disabled:text-slate-400"
+              >
+                {loadingBranches ? 'Atualizando…' : '↻ Atualizar branches'}
+              </button>
+            </div>
             <input
               id="sync-branch-input"
               type="text"
@@ -481,6 +606,50 @@ export default function EgressosDadosDataControl() {
               }
               className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-mono"
             />
+            {availableBranches.length > 0 && (
+              <select
+                aria-label="Selecionar branch existente"
+                value={availableBranches.includes(syncConfig.branch) ? syncConfig.branch : ''}
+                onChange={(e) => {
+                  if (e.target.value) {
+                    handleSelectBranch(e.target.value);
+                  }
+                }}
+                disabled={syncBusy}
+                className="mt-1.5 w-full px-2.5 py-1 border border-slate-200 rounded-lg text-xs text-slate-700 bg-slate-50"
+              >
+                {availableBranches.map((b) => (
+                  <option key={b} value={b}>
+                    {b}
+                    {newlyDetectedBranches.includes(b) ? ' (nova)' : ''}
+                  </option>
+                ))}
+              </select>
+            )}
+            {newlyDetectedBranches.length > 0 && (
+              <div
+                data-testid="newly-detected-branches"
+                className="mt-1.5 p-2 rounded-lg bg-emerald-50 border border-emerald-200 text-[11px] text-emerald-900"
+              >
+                <span className="font-semibold block mb-1">
+                  Novas branches detectadas no GitHub:
+                </span>
+                <div className="flex flex-wrap gap-1">
+                  {newlyDetectedBranches.map((nb) => (
+                    <button
+                      key={nb}
+                      type="button"
+                      onClick={() => handleSelectBranch(nb)}
+                      className="px-2 py-0.5 rounded-full bg-emerald-100 hover:bg-emerald-200 text-emerald-900 font-mono border border-emerald-300 transition-colors"
+                      title="Clique para selecionar esta branch"
+                    >
+                      {nb}
+                      {remoteBranchShas[nb] ? ` (${remoteBranchShas[nb].slice(0, 7)})` : ''}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
           <div>
             <label
@@ -508,6 +677,63 @@ export default function EgressosDadosDataControl() {
             </button>
           </div>
         </form>
+
+        <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-2.5">
+          <span className="block text-xs font-semibold text-slate-700">
+            Modo de branch no envio
+          </span>
+          <div className="flex flex-wrap gap-4 text-xs text-slate-700">
+            <label className="inline-flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="branch-mode-egressos-dados"
+                value="create"
+                checked={branchMode === 'create'}
+                onChange={() => setBranchMode('create')}
+                disabled={syncBusy}
+                aria-label="Criar nova branch com os novos dados"
+              />
+              <span>
+                <strong>Criar nova branch com os novos dados</strong> (ramifica de{' '}
+                <code>{syncConfig.branch || 'main'}</code>)
+              </span>
+            </label>
+            <label className="inline-flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="branch-mode-egressos-dados"
+                value="existing"
+                checked={branchMode === 'existing'}
+                onChange={() => setBranchMode('existing')}
+                disabled={syncBusy}
+                aria-label="Enviar na branch selecionada"
+              />
+              <span>
+                <strong>Enviar na branch selecionada</strong> (
+                <code>{syncConfig.branch || 'main'}</code>)
+              </span>
+            </label>
+          </div>
+          {branchMode === 'create' && (
+            <div>
+              <label
+                htmlFor="new-branch-egressos-dados"
+                className="block text-xs font-medium text-slate-700 mb-1"
+              >
+                Nome da nova branch
+              </label>
+              <input
+                id="new-branch-egressos-dados"
+                type="text"
+                aria-label="Nome da nova branch"
+                value={newBranchName}
+                onChange={(e) => setNewBranchName(e.target.value)}
+                disabled={syncBusy}
+                className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-mono bg-white"
+              />
+            </div>
+          )}
+        </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-slate-100">
           <div className="space-y-2">
@@ -578,6 +804,16 @@ export default function EgressosDadosDataControl() {
             <div>{syncFeedback.text}</div>
             {syncFeedback.url && (
               <div className="mt-1 font-mono break-all">{syncFeedback.url}</div>
+            )}
+            {syncFeedback.type === 'success' && syncFeedback.canRefreshBranches && (
+              <button
+                type="button"
+                onClick={() => handleLoadBranches({ silent: false })}
+                disabled={syncBusy || loadingBranches}
+                className="mt-2 block text-xs font-semibold text-emerald-900 underline hover:text-emerald-950"
+              >
+                ↻ Atualizar lista de branches do GitHub
+              </button>
             )}
             {syncFeedback.snapshot && (
               <div className="mt-1 text-slate-600 break-all">

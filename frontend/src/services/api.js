@@ -185,6 +185,11 @@ const ROUTES = [
       path: b?.path ?? '',
     })],
 
+  [/^\/egressos-dados\/sync\/branches$/, 'GET', (_m, _b, q) =>
+    invoke('egressos_dados_sync_list_branches', {
+      repo: q.get('repo') ?? null,
+    })],
+
   [/^\/egressos-dados\/sync\/download$/, 'POST', (_m, b) =>
     invoke('egressos_dados_sync_download', {
       sourceUrl: b?.source_url ?? b?.sourceUrl ?? b?.url ?? null,
@@ -197,6 +202,10 @@ const ROUTES = [
     invoke('egressos_dados_sync_upload', {
       confirmOverwrite: b?.confirmOverwrite ?? b?.confirm_overwrite ?? true,
       commitMessage: b?.commitMessage ?? b?.commit_message ?? null,
+      createNewBranch: b?.createNewBranch ?? b?.create_new_branch ?? false,
+      baseBranch: b?.baseBranch ?? b?.base_branch ?? null,
+      newBranch: b?.newBranch ?? b?.new_branch ?? null,
+      targetBranch: b?.targetBranch ?? b?.target_branch ?? null,
     })],
 
   [/^\/auth\/login$/, 'POST', (_m, b) =>
@@ -236,9 +245,20 @@ const ROUTES = [
   [/^\/github\/check$/, 'GET', (_m, _b, q) =>
     invoke('github_check_destination', { project: q.get('project') })],
 
+  [/^\/github\/branches$/, 'GET', (_m, _b, q) =>
+    invoke('github_list_branches', {
+      project: q.get('project'),
+      repo: q.get('repo') ?? null,
+    })],
+
   [/^\/github\/upload$/, 'POST', (_m, b) =>
     invoke('github_upload', {
-      project: b.project, confirmOverwrite: b?.confirmOverwrite ?? false,
+      project: b.project,
+      confirmOverwrite: b?.confirmOverwrite ?? false,
+      createNewBranch: b?.createNewBranch ?? b?.create_new_branch ?? false,
+      baseBranch: b?.baseBranch ?? b?.base_branch ?? null,
+      newBranch: b?.newBranch ?? b?.new_branch ?? null,
+      targetBranch: b?.targetBranch ?? b?.target_branch ?? null,
     })],
 
   [/^\/github\/token$/, 'POST', (_m, b) =>
@@ -249,6 +269,46 @@ const ROUTES = [
 
   [/^\/github\/token\/test$/, 'POST', () =>
     invoke('github_test_token')],
+
+  // SEP-039: dedicated Horizon v2 routes (must precede generic /{entity} routes)
+  [/^\/horizon-v2\/import$/, 'POST', (_m, b) =>
+    invoke('import_horizon_v2_zip', { path: b?.path ?? null })],
+
+  [/^\/horizon-v2\/export$/, 'POST', () =>
+    invoke('export_horizon_v2_zip')],
+
+  [/^\/horizon-v2\/merge\/([^/?]+)$/, 'POST', (m, b) =>
+    invoke('hv2_merge_entities', {
+      entity: m[1], sourceIds: b.source_ids, resolvedData: b.resolved_data,
+    })],
+
+  [/^\/horizon-v2\/link$/, 'POST', (_m, b) =>
+    invoke('hv2_link_entities', {
+      parentType: b.parent_type, parentId: b.parent_id,
+      childType: b.child_type, childId: b.child_id,
+    })],
+
+  [/^\/horizon-v2\/([^/?]+)\/(\d+)$/, 'GET', (m) =>
+    invoke('hv2_get_entity', { entity: m[1], id: Number(m[2]) })],
+
+  [/^\/horizon-v2\/([^/?]+)\/(\d+)$/, 'PUT', (m, b) =>
+    invoke('hv2_update_entity', { entity: m[1], id: Number(m[2]), payload: b })],
+
+  [/^\/horizon-v2\/([^/?]+)\/(\d+)$/, 'DELETE', (m) =>
+    invoke('hv2_delete_entity', { entity: m[1], id: Number(m[2]) })],
+
+  [/^\/horizon-v2\/([^/?]+)$/, 'POST', (m, b) =>
+    invoke('hv2_create_entity', { entity: m[1], payload: b ?? {} })],
+
+  [/^\/horizon-v2\/([^/?]+)$/, 'GET', (m, _b, q) =>
+    invoke('hv2_list_entities', {
+      entity: m[1],
+      limit: q.has('limit') ? Number(q.get('limit')) : null,
+      offset: q.has('offset') ? Number(q.get('offset')) : null,
+      search: q.get('search'),
+      sort: q.get('sort'),
+      order: q.get('order'),
+    })],
 
   [/^\/([^/?]+)\/(\d+)$/, 'GET', (m) =>
     invoke('get_entity', { entity: m[1], id: Number(m[2]) })],
@@ -332,6 +392,13 @@ export function onEgressosImportProgress(callback) {
 // SEP-037: encapsula o listener de egressos-dados-import://progress mantendo a fronteira única.
 export function onEgressosDadosImportProgress(callback) {
   return listen('egressos-dados-import://progress', (event) => {
+    callback(event.payload);
+  });
+}
+
+// SEP-039: encapsula o listener de horizon-v2-import://progress mantendo a fronteira única.
+export function onHorizonV2ImportProgress(callback) {
+  return listen('horizon-v2-import://progress', (event) => {
     callback(event.payload);
   });
 }

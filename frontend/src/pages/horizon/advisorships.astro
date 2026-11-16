@@ -1,0 +1,25 @@
+---
+import HorizonDashboard from '../../layouts/HorizonDashboard.astro';
+import EntityPage from '../../components/EntityPage.jsx';
+---
+
+<HorizonDashboard>
+  <EntityPage
+    client:load
+    entity="advisorships"
+    apiPrefix="/horizon-v2"
+    basePath="/horizon"
+    columns={['id', 'name', 'status', 'start_date', 'end_date', 'campus', 'advisorships', 'team']}
+    fields={[
+      { name: 'id', label: 'ID', type: 'number' },
+      { name: 'name', label: 'Nome', required: true },
+      { name: 'status', label: 'Status' },
+      { name: 'description', label: 'Descrição' },
+      { name: 'start_date', label: 'Data de Início' },
+      { name: 'end_date', label: 'Data de Término' },
+      { name: 'campus', label: 'Campus (Vínculos)', type: 'json_readonly' },
+      { name: 'advisorships', label: 'Orientações (Vínculos)', type: 'json_readonly' },
+      { name: 'team', label: 'Equipe (Vínculos)', type: 'json_readonly' }
+    ]}
+  />
+</HorizonDashboard>

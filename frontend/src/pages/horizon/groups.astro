@@ -1,0 +1,29 @@
+---
+import HorizonDashboard from '../../layouts/HorizonDashboard.astro';
+import EntityPage from '../../components/EntityPage.jsx';
+---
+
+<HorizonDashboard>
+  <EntityPage
+    client:load
+    entity="groups"
+    apiPrefix="/horizon-v2"
+    basePath="/horizon"
+    columns={['id', 'name', 'short_name', 'organization', 'campus', 'knowledge_areas', 'leaders', 'members']}
+    fields={[
+      { name: 'id', label: 'ID', type: 'number' },
+      { name: 'name', label: 'Nome', required: true },
+      { name: 'description', label: 'Descrição' },
+      { name: 'short_name', label: 'Sigla' },
+      { name: 'organization_id', label: 'Organização (ID)', type: 'number' },
+      { name: 'campus_id', label: 'Campus (ID)', type: 'number' },
+      { name: 'cnpq_url', label: 'URL CNPq' },
+      { name: 'site', label: 'Site' },
+      { name: 'organization', label: 'Organização (Vínculo)', type: 'json_readonly' },
+      { name: 'campus', label: 'Campus (Vínculos)', type: 'json_readonly' },
+      { name: 'knowledge_areas', label: 'Áreas de Conhecimento (Vínculos)', type: 'json_readonly' },
+      { name: 'leaders', label: 'Líderes (Vínculos)', type: 'json_readonly' },
+      { name: 'members', label: 'Membros (Vínculos)', type: 'json_readonly' }
+    ]}
+  />
+</HorizonDashboard>

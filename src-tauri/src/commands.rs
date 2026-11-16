@@ -71,6 +71,76 @@ pub fn delete_entity(state: State<'_, AppState>, entity: String, id: i64) -> Res
     crud::delete(&conn, &entity, id)
 }
 
+// ------------------------------------------------ Horizon v2 CRUD (SEP-039)
+
+#[tauri::command(async)]
+pub fn hv2_list_entities(
+    state: State<'_, AppState>,
+    entity: String,
+    limit: Option<i64>,
+    offset: Option<i64>,
+    search: Option<String>,
+    sort: Option<String>,
+    order: Option<String>,
+) -> Result<Page, AppError> {
+    state.require_session()?;
+    let conn = state.db()?;
+    crud::hv2_list(
+        &conn,
+        &entity,
+        limit,
+        offset,
+        search.as_deref(),
+        sort.as_deref(),
+        order.as_deref(),
+    )
+}
+
+#[tauri::command(async)]
+pub fn hv2_get_entity(
+    state: State<'_, AppState>,
+    entity: String,
+    id: i64,
+) -> Result<Record, AppError> {
+    state.require_session()?;
+    let conn = state.db()?;
+    crud::hv2_get(&conn, &entity, id)
+}
+
+#[tauri::command(async)]
+pub fn hv2_create_entity(
+    state: State<'_, AppState>,
+    entity: String,
+    payload: Record,
+) -> Result<Record, AppError> {
+    state.require_session()?;
+    let conn = state.db()?;
+    crud::hv2_create(&conn, &entity, &payload)
+}
+
+#[tauri::command(async)]
+pub fn hv2_update_entity(
+    state: State<'_, AppState>,
+    entity: String,
+    id: i64,
+    payload: Record,
+) -> Result<Record, AppError> {
+    state.require_session()?;
+    let conn = state.db()?;
+    crud::hv2_update(&conn, &entity, id, &payload)
+}
+
+#[tauri::command(async)]
+pub fn hv2_delete_entity(
+    state: State<'_, AppState>,
+    entity: String,
+    id: i64,
+) -> Result<(), AppError> {
+    state.require_session()?;
+    let conn = state.db()?;
+    crud::hv2_delete(&conn, &entity, id)
+}
+
 #[derive(serde::Serialize)]
 pub struct LoginResult {
     /// Kept only so the existing LoginForm keeps working unchanged; it carries
@@ -195,6 +265,88 @@ pub fn export_canonical_zip(
     let (bytes, tables, preserved) =
         crate::export::build_archive(&conn, original.as_deref(), |t| {
             let _ = app.emit("export://progress", t);
+        })?;
+
+    std::fs::write(&target, &bytes)?;
+
+    Ok(Some(crate::export::ExportSummary {
+        tables,
+        preserved_entries: preserved,
+        path: target.display().to_string(),
+    }))
+}
+
+/// Import the canonical archive into the isolated Horizon v2 workspace (`hv2_*` tables) (SEP-039).
+#[tauri::command(async)]
+pub fn import_horizon_v2_zip(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    path: Option<String>,
+) -> Result<Option<crate::import::ImportSummary>, AppError> {
+    use tauri::Emitter;
+    use tauri_plugin_dialog::DialogExt;
+
+    let chosen = match path {
+        Some(p) => std::path::PathBuf::from(p),
+        None => {
+            let picked = app
+                .dialog()
+                .file()
+                .add_filter("Pacote canônico", &["zip"])
+                .blocking_pick_file();
+            match picked {
+                Some(f) => f.into_path().map_err(|e| AppError::Internal(e.to_string()))?,
+                None => return Ok(None),
+            }
+        }
+    };
+
+    if !crate::import::looks_like_zip(&chosen) {
+        return Err(AppError::Internal(
+            "Apenas arquivos .zip contendo dados canônicos são aceitos.".into(),
+        ));
+    }
+
+    let bytes = std::fs::read(&chosen)?;
+    let data_dir = app_data_dir(&app)?;
+
+    state.require_session()?;
+    let mut conn = state.etl_connection()?;
+    let summary = crate::import::import_horizon_v2_archive(&mut conn, &bytes, &data_dir, |t| {
+        let _ = app.emit("horizon-v2-import://progress", t);
+    })?;
+
+    Ok(Some(summary))
+}
+
+/// Export the curated Horizon v2 base (`hv2_*` tables) preserving `horizon_v2_original.zip` entries (SEP-039).
+#[tauri::command(async)]
+pub fn export_horizon_v2_zip(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<crate::export::ExportSummary>, AppError> {
+    use tauri::Emitter;
+    use tauri_plugin_dialog::DialogExt;
+
+    let target = match app
+        .dialog()
+        .file()
+        .set_file_name(crate::export::DEFAULT_FILENAME)
+        .add_filter("Pacote canônico", &["zip"])
+        .blocking_save_file()
+    {
+        Some(f) => f.into_path().map_err(|e| AppError::Internal(e.to_string()))?,
+        None => return Ok(None),
+    };
+
+    let data_dir = app_data_dir(&app)?;
+    let original = std::fs::read(data_dir.join(crate::import::HORIZON_V2_ORIGINAL_ARCHIVE)).ok();
+
+    state.require_session()?;
+    let conn = state.etl_connection()?;
+    let (bytes, tables, preserved) =
+        crate::export::build_horizon_v2_archive(&conn, original.as_deref(), |t| {
+            let _ = app.emit("horizon-v2-export://progress", t);
         })?;
 
     std::fs::write(&target, &bytes)?;
@@ -668,11 +820,33 @@ pub async fn github_check_destination(
 }
 
 #[tauri::command(async)]
+pub async fn github_list_branches(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    project: String,
+    repo: Option<String>,
+) -> Result<Vec<crate::sync_domain::RemoteBranchInfo>, AppError> {
+    state.require_session()?;
+    let data_dir = app_data_dir(&app)?;
+    let config = crate::sync_domain::load_config(&data_dir)?;
+    let client = crate::sync_github::GitHubClient::new(
+        crate::sync_github::GITHUB_API,
+        config.token,
+    );
+    crate::sync_github::list_project_branches(&data_dir, &project, repo.as_deref(), &client).await
+}
+
+#[tauri::command(async)]
+#[allow(clippy::too_many_arguments)]
 pub async fn github_upload(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     project: String,
     confirm_overwrite: Option<bool>,
+    create_new_branch: Option<bool>,
+    base_branch: Option<String>,
+    new_branch: Option<String>,
+    target_branch: Option<String>,
 ) -> Result<crate::sync_github::UploadResult, AppError> {
     use tauri::Emitter;
     state.require_session()?;
@@ -682,13 +856,60 @@ pub async fn github_upload(
         crate::sync_github::GITHUB_API,
         config.token,
     );
+    let branch_options = crate::sync_domain::UploadBranchOptions {
+        create_new_branch: create_new_branch.unwrap_or(false),
+        base_branch,
+        new_branch,
+        target_branch,
+    };
 
     let result = if project == "egressos" {
         let mut conn = state.etl_connection()?;
-        crate::sync_github::upload_egressos_dir(
+        crate::sync_github::upload_egressos_dir_with_options(
             &mut conn,
             &data_dir,
             confirm_overwrite.unwrap_or(false),
+            &branch_options,
+            &client,
+            &|p| {
+                let _ = app.emit("sync://progress", p);
+            },
+        )
+        .await
+    } else if project == "src" {
+        let bytes = {
+            let conn = state.etl_connection()?;
+            crate::src_domain::export(&conn)?.into_bytes()
+        };
+
+        crate::sync_github::upload_horizon_export_with_options(
+            bytes,
+            &data_dir,
+            &project,
+            confirm_overwrite.unwrap_or(false),
+            &branch_options,
+            &client,
+            &|p| {
+                let _ = app.emit("sync://progress", p);
+            },
+        )
+        .await
+    } else if project == "horizon_v2" {
+        let bytes = {
+            let conn = state.etl_connection()?;
+            let original =
+                std::fs::read(data_dir.join(crate::import::HORIZON_V2_ORIGINAL_ARCHIVE)).ok();
+            let (b, _tables, _preserved) =
+                crate::export::build_horizon_v2_archive(&conn, original.as_deref(), |_| {})?;
+            b
+        };
+
+        crate::sync_github::upload_horizon_export_with_options(
+            bytes,
+            &data_dir,
+            &project,
+            confirm_overwrite.unwrap_or(false),
+            &branch_options,
             &client,
             &|p| {
                 let _ = app.emit("sync://progress", p);
@@ -704,11 +925,12 @@ pub async fn github_upload(
             b
         };
 
-        crate::sync_github::upload_horizon_export(
+        crate::sync_github::upload_horizon_export_with_options(
             bytes,
             &data_dir,
             &project,
             confirm_overwrite.unwrap_or(false),
+            &branch_options,
             &client,
             &|p| {
                 let _ = app.emit("sync://progress", p);
@@ -1125,11 +1347,37 @@ pub async fn egressos_dados_sync_download(
 }
 
 #[tauri::command(async)]
+pub async fn egressos_dados_sync_list_branches(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    repo: Option<String>,
+) -> Result<Vec<crate::sync_domain::RemoteBranchInfo>, AppError> {
+    let auth = state.require_egressos_dados_session()?;
+    let data_dir = app_data_dir(&app)?;
+    let client = crate::sync_github::GitHubClient::new(
+        crate::sync_github::GITHUB_API,
+        Some(auth.token),
+    );
+    crate::sync_github::list_project_branches(
+        &data_dir,
+        "egressos_dados",
+        repo.as_deref(),
+        &client,
+    )
+    .await
+}
+
+#[tauri::command(async)]
+#[allow(clippy::too_many_arguments)]
 pub async fn egressos_dados_sync_upload(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     confirm_overwrite: Option<bool>,
     commit_message: Option<String>,
+    create_new_branch: Option<bool>,
+    base_branch: Option<String>,
+    new_branch: Option<String>,
+    target_branch: Option<String>,
 ) -> Result<crate::sync_github::UploadResult, AppError> {
     use tauri::Emitter;
     let auth = state.require_egressos_dados_session()?;
@@ -1139,12 +1387,19 @@ pub async fn egressos_dados_sync_upload(
         Some(auth.token),
     );
     let mut conn = state.etl_connection()?;
+    let branch_options = crate::sync_domain::UploadBranchOptions {
+        create_new_branch: create_new_branch.unwrap_or(false),
+        base_branch,
+        new_branch,
+        target_branch,
+    };
 
-    let result = crate::sync_github::upload_egressos_dados_repo(
+    let result = crate::sync_github::upload_egressos_dados_repo_with_options(
         &mut conn,
         &data_dir,
         confirm_overwrite.unwrap_or(true),
         commit_message.as_deref(),
+        &branch_options,
         &client,
         &|p| {
             let _ = app.emit("sync://progress", p);
@@ -1192,6 +1447,31 @@ pub fn link_entities(
     state.require_session()?;
     let conn = state.db()?;
     crate::special::link(&conn, &parent_type, parent_id, &child_type, child_id)
+}
+
+#[tauri::command(async)]
+pub fn hv2_merge_entities(
+    state: State<'_, AppState>,
+    entity: String,
+    source_ids: Vec<i64>,
+    resolved_data: crud::Record,
+) -> Result<crud::Record, AppError> {
+    state.require_session()?;
+    let mut conn = state.etl_connection()?;
+    crate::special::hv2_merge(&mut conn, &entity, &source_ids, &resolved_data)
+}
+
+#[tauri::command(async)]
+pub fn hv2_link_entities(
+    state: State<'_, AppState>,
+    parent_type: String,
+    parent_id: i64,
+    child_type: String,
+    child_id: i64,
+) -> Result<crud::Record, AppError> {
+    state.require_session()?;
+    let conn = state.db()?;
+    crate::special::hv2_link(&conn, &parent_type, parent_id, &child_type, child_id)
 }
 
 #[tauri::command(async)]

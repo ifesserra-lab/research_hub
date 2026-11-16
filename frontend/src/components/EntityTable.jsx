@@ -25,7 +25,12 @@ export default function EntityTable({ entities, entityName, columns, fields = []
         if (Array.isArray(parsed)) {
           return `${parsed.length} vínculos`;
         } else if (typeof parsed === 'object' && parsed !== null) {
-          return parsed.name || parsed.title || '-';
+          return (
+            parsed.name ||
+            parsed.title ||
+            (parsed.project_code ? `SIGPesq #${parsed.project_code}` : parsed.source) ||
+            '-'
+          );
         }
       } catch (e) {
         return 'Erro';

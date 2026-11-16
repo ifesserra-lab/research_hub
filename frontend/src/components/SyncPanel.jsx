@@ -2,12 +2,82 @@ import React, { useState, useEffect } from 'react';
 import { apiFetch, onSyncProgress } from '../services/api.js';
 import TokenDialog from './TokenDialog.jsx';
 
+export function buildSuggestedBranchName(project) {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const stamp = `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}-${pad(
+    d.getUTCHours()
+  )}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}`;
+  return `update/${project || 'dados'}-${stamp}`;
+}
+
+export function extractRepoFromGitHubUrl(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== 'string') return '';
+  try {
+    const parsed = new URL(rawUrl.trim());
+    if (
+      parsed.hostname !== 'github.com' &&
+      parsed.hostname !== 'raw.githubusercontent.com'
+    ) {
+      return '';
+    }
+    const parts = parsed.pathname.split('/').filter(Boolean);
+    if (parts.length >= 2) {
+      return `${parts[0]}/${parts[1].replace(/\.git$/, '')}`;
+    }
+  } catch {
+    // ignore invalid URL
+  }
+  return '';
+}
+
+export function replaceBranchInGitHubUrl(rawUrl, nextBranch) {
+  if (!rawUrl || typeof rawUrl !== 'string' || !nextBranch) return rawUrl;
+  try {
+    const parsed = new URL(rawUrl.trim());
+    const parts = parsed.pathname.split('/').filter(Boolean);
+    const isNamespaced = (seg) =>
+      ['update', 'feature', 'fix', 'hotfix', 'release'].includes(seg);
+
+    if (parsed.hostname === 'raw.githubusercontent.com' && parts.length >= 4) {
+      const owner = parts[0];
+      const repo = parts[1];
+      const pathStart = isNamespaced(parts[2]) && parts.length >= 5 ? 4 : 3;
+      const restPath = parts.slice(pathStart).join('/');
+      return `https://raw.githubusercontent.com/${owner}/${repo}/${nextBranch}/${restPath}`;
+    }
+    if (
+      parsed.hostname === 'github.com' &&
+      parts.length >= 4 &&
+      (parts[2] === 'tree' || parts[2] === 'blob')
+    ) {
+      const owner = parts[0];
+      const repo = parts[1];
+      const kind = parts[2];
+      const pathStart = isNamespaced(parts[3]) && parts.length >= 5 ? 5 : 4;
+      const restPath = parts.slice(pathStart).join('/');
+      return restPath
+        ? `https://github.com/${owner}/${repo}/${kind}/${nextBranch}/${restPath}`
+        : `https://github.com/${owner}/${repo}/${kind}/${nextBranch}`;
+    }
+  } catch {
+    // ignore
+  }
+  return rawUrl;
+}
+
 export default function SyncPanel({ project = 'horizon', allowUpload = false }) {
   const [config, setConfig] = useState(null);
   const [url, setUrl] = useState('');
   const [repo, setRepo] = useState('');
   const [branch, setBranch] = useState('main');
   const [destPath, setDestPath] = useState('');
+  const [availableBranches, setAvailableBranches] = useState(['main']);
+  const [newlyDetectedBranches, setNewlyDetectedBranches] = useState([]);
+  const [remoteBranchShas, setRemoteBranchShas] = useState({});
+  const [loadingBranches, setLoadingBranches] = useState(false);
+  const [branchMode, setBranchMode] = useState('create');
+  const [newBranchName, setNewBranchName] = useState(() => buildSuggestedBranchName(project));
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(null);
   const [message, setMessage] = useState(null);
@@ -33,7 +103,12 @@ export default function SyncPanel({ project = 'horizon', allowUpload = false }) 
             setUrl(cfg.last_source_url);
           }
           if (cfg.repo) setRepo(cfg.repo);
-          if (cfg.branch) setBranch(cfg.branch);
+          if (cfg.branch) {
+            setBranch(cfg.branch);
+            setAvailableBranches((prev) =>
+              prev.includes(cfg.branch) ? prev : [cfg.branch, ...prev]
+            );
+          }
           if (cfg.path) setDestPath(cfg.path);
         }
       } catch (err) {
@@ -67,6 +142,99 @@ export default function SyncPanel({ project = 'horizon', allowUpload = false }) 
 
   function isValidRepo(r) {
     return typeof r === 'string' && /^[^/\s]+\/[^/\s]+$/.test(r.trim());
+  }
+
+  function handleSelectBranch(selectedBranch) {
+    if (!selectedBranch) return;
+    setBranch(selectedBranch);
+    if (url && url.trim()) {
+      setUrl((prevUrl) => replaceBranchInGitHubUrl(prevUrl, selectedBranch));
+    }
+  }
+
+  async function handleLoadBranches(options = {}) {
+    const isSilent = Boolean(options && options.silent === true);
+    const createdBranch =
+      options && typeof options.createdBranch === 'string' ? options.createdBranch : null;
+
+    const candidateRepo = isValidRepo(repo)
+      ? repo.trim()
+      : extractRepoFromGitHubUrl(url);
+
+    if (!isValidRepo(candidateRepo)) {
+      if (!isSilent) {
+        setMessage({
+          type: 'error',
+          text: 'O repositório deve estar no formato owner/name para listar as branches.',
+        });
+      }
+      return;
+    }
+
+    if (!isValidRepo(repo) && isValidRepo(candidateRepo)) {
+      setRepo(candidateRepo);
+    }
+
+    setLoadingBranches(true);
+    if (!isSilent) {
+      setMessage(null);
+    }
+    try {
+      const list = await apiFetch(
+        `/github/branches?project=${encodeURIComponent(project)}&repo=${encodeURIComponent(
+          candidateRepo
+        )}`
+      );
+      if (!Array.isArray(list)) {
+        return;
+      }
+      const names = list.map((b) => b?.name).filter(Boolean);
+      const shaMap = {};
+      for (const item of list) {
+        if (item?.name && item?.commit_sha) {
+          shaMap[item.name] = item.commit_sha;
+        }
+      }
+      setRemoteBranchShas((prev) => ({ ...prev, ...shaMap }));
+
+      const detectedNew = names.filter((n) => !availableBranches.includes(n));
+      const allNew = Array.from(
+        new Set([...(createdBranch ? [createdBranch] : []), ...detectedNew])
+      );
+      if (allNew.length > 0) {
+        setNewlyDetectedBranches((prev) => Array.from(new Set([...allNew, ...prev])));
+      }
+
+      const merged = Array.from(
+        new Set([
+          branch || 'main',
+          'main',
+          ...(createdBranch ? [createdBranch] : []),
+          ...names,
+        ])
+      );
+      setAvailableBranches(merged);
+
+      if (!isSilent) {
+        setMessage({
+          type: 'success',
+          text:
+            detectedNew.length > 0
+              ? `Branches sincronizadas com o GitHub (${names.length} encontradas). Novas branches detectadas: ${detectedNew.join(', ')}`
+              : `Branches atualizadas do GitHub (${names.length} disponíveis: ${names.join(', ') || 'main'}).`,
+        });
+      }
+    } catch (err) {
+      if (!isSilent) {
+        setMessage({
+          type: 'error',
+          text: err?.message ?? 'Falha ao carregar branches do repositório.',
+          kind: err?.kind,
+        });
+      }
+    } finally {
+      setLoadingBranches(false);
+    }
   }
 
   async function handleDownload(e) {
@@ -170,29 +338,70 @@ export default function SyncPanel({ project = 'horizon', allowUpload = false }) 
     setProgress(null);
 
     try {
-      const check = await apiFetch(`/github/check?project=${project}`);
+      const createNewBranch = branchMode === 'create';
+      const baseBranch = branch.trim() || 'main';
       let confirmOverwrite = false;
-      if (check.file_exists) {
-        const ok = window.confirm('O arquivo já existe no destino. Deseja sobrescrever?');
-        if (!ok) {
-          setBusy(false);
-          return;
+
+      if (!createNewBranch) {
+        const check = await apiFetch(`/github/check?project=${project}`);
+        if (check?.file_exists) {
+          const ok = window.confirm('O arquivo já existe no destino. Deseja sobrescrever?');
+          if (!ok) {
+            setBusy(false);
+            return;
+          }
+          confirmOverwrite = true;
         }
-        confirmOverwrite = true;
       }
 
       const res = await apiFetch('/github/upload', {
         method: 'POST',
-        body: JSON.stringify({ project, confirmOverwrite }),
+        body: JSON.stringify({
+          project,
+          confirmOverwrite,
+          createNewBranch,
+          baseBranch,
+          newBranch: createNewBranch ? newBranchName.trim() || null : null,
+          targetBranch: createNewBranch ? null : baseBranch,
+        }),
       });
+
+      const publishedBranch =
+        res?.branch || (createNewBranch ? newBranchName.trim() : baseBranch);
+
+      if (publishedBranch) {
+        setAvailableBranches((prev) =>
+          prev.includes(publishedBranch) ? prev : [...prev, publishedBranch]
+        );
+        if (res?.created_branch) {
+          setNewlyDetectedBranches((prev) =>
+            prev.includes(publishedBranch) ? prev : [publishedBranch, ...prev]
+          );
+        }
+        if (res?.commit_sha) {
+          setRemoteBranchShas((prev) => ({ ...prev, [publishedBranch]: res.commit_sha }));
+        }
+      }
+
+      if (createNewBranch) {
+        setNewBranchName(buildSuggestedBranchName(project));
+      }
 
       setMessage({
         type: 'success',
-        text: 'Enviado com sucesso!',
+        text: res?.created_branch
+          ? `Enviado com sucesso! Nova branch criada: ${publishedBranch}`
+          : `Enviado com sucesso na branch ${publishedBranch}!`,
+        canRefreshBranches: true,
         link: {
           url: res.html_url,
           text: res.commit_sha ? res.commit_sha.slice(0, 7) : 'Ver commit',
         },
+      });
+
+      await handleLoadBranches({
+        silent: true,
+        createdBranch: res?.created_branch ? publishedBranch : null,
       });
     } catch (err) {
       setMessage({
@@ -265,6 +474,16 @@ export default function SyncPanel({ project = 'horizon', allowUpload = false }) 
                 >
                   {message.link.text}
                 </a>
+              )}
+              {allowUpload && message.type === 'success' && message.canRefreshBranches && (
+                <button
+                  type="button"
+                  onClick={() => handleLoadBranches({ silent: false })}
+                  disabled={busy || loadingBranches}
+                  className="mt-2 block text-xs font-semibold text-emerald-900 underline hover:text-emerald-950"
+                >
+                  ↻ Atualizar lista de branches do GitHub
+                </button>
               )}
               {message.kind === 'github_api' &&
                 (message.text.includes('autenticado') || message.text.includes('token')) && (
@@ -363,6 +582,8 @@ export default function SyncPanel({ project = 'horizon', allowUpload = false }) 
           <p className="text-xs text-slate-500 mb-4">
             {project === 'egressos'
               ? 'Configure o repositório e a pasta de destino para publicar os 21 arquivos JSON do Egressos em um único commit.'
+              : project === 'src'
+              ? 'Configure o repositório e o caminho do arquivo .json para publicar o JSON consolidado do SRC.'
               : 'Configure o repositório de destino para exportar a base do Horizon.'}
           </p>
 
@@ -389,9 +610,20 @@ export default function SyncPanel({ project = 'horizon', allowUpload = false }) 
                 />
               </div>
               <div>
-                <label htmlFor="dest-branch" className="block text-xs font-medium text-slate-700 mb-1">
-                  Branch
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label htmlFor="dest-branch" className="block text-xs font-medium text-slate-700">
+                    Branch
+                  </label>
+                  <button
+                    type="button"
+                    aria-label="Carregar branches / Atualizar branches"
+                    onClick={() => handleLoadBranches({ silent: false })}
+                    disabled={busy || loadingBranches}
+                    className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-600 hover:text-blue-800 underline disabled:text-slate-400"
+                  >
+                    {loadingBranches ? 'Atualizando…' : '↻ Atualizar branches'}
+                  </button>
+                </div>
                 <input
                   id="dest-branch"
                   name="dest-branch"
@@ -403,6 +635,48 @@ export default function SyncPanel({ project = 'horizon', allowUpload = false }) 
                   disabled={busy}
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400"
                 />
+                {availableBranches.length > 0 && (
+                  <select
+                    aria-label="Selecionar branch existente"
+                    value={availableBranches.includes(branch) ? branch : ''}
+                    onChange={(e) => {
+                      if (e.target.value) handleSelectBranch(e.target.value);
+                    }}
+                    disabled={busy}
+                    className="mt-1.5 w-full px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 bg-slate-50"
+                  >
+                    {availableBranches.map((b) => (
+                      <option key={b} value={b}>
+                        {b}
+                        {newlyDetectedBranches.includes(b) ? ' (nova)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                {newlyDetectedBranches.length > 0 && (
+                  <div
+                    data-testid="newly-detected-branches"
+                    className="mt-1.5 p-2 rounded-lg bg-emerald-50 border border-emerald-200 text-[11px] text-emerald-900"
+                  >
+                    <span className="font-semibold block mb-1">
+                      Novas branches detectadas no GitHub:
+                    </span>
+                    <div className="flex flex-wrap gap-1">
+                      {newlyDetectedBranches.map((nb) => (
+                        <button
+                          key={nb}
+                          type="button"
+                          onClick={() => handleSelectBranch(nb)}
+                          className="px-2 py-0.5 rounded-full bg-emerald-100 hover:bg-emerald-200 text-emerald-900 font-mono border border-emerald-300 transition-colors"
+                          title="Clique para selecionar esta branch"
+                        >
+                          {nb}
+                          {remoteBranchShas[nb] ? ` (${remoteBranchShas[nb].slice(0, 7)})` : ''}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
               <div>
                 <label htmlFor="dest-path" className="block text-xs font-medium text-slate-700 mb-1">
@@ -413,13 +687,77 @@ export default function SyncPanel({ project = 'horizon', allowUpload = false }) 
                   name="dest-path"
                   type="text"
                   aria-label="Caminho do arquivo"
-                  placeholder={project === 'egressos' ? 'dados' : 'exports/exports_canonical.zip'}
+                  placeholder={
+                    project === 'egressos'
+                      ? 'dados'
+                      : project === 'src'
+                      ? 'dados/src_consolidado.json'
+                      : 'exports/exports_canonical.zip'
+                  }
                   value={destPath}
                   onChange={(e) => setDestPath(e.target.value)}
                   disabled={busy}
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400"
                 />
               </div>
+            </div>
+
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-3">
+              <span className="block text-xs font-semibold text-slate-700">
+                Modo de branch no envio
+              </span>
+              <div className="flex flex-wrap gap-4 text-xs text-slate-700">
+                <label className="inline-flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name={`branch-mode-${project}`}
+                    value="create"
+                    checked={branchMode === 'create'}
+                    onChange={() => setBranchMode('create')}
+                    disabled={busy}
+                    aria-label="Criar nova branch com os novos dados"
+                  />
+                  <span>
+                    <strong>Criar nova branch com os novos dados</strong> (ramifica de{' '}
+                    <code>{branch || 'main'}</code>)
+                  </span>
+                </label>
+                <label className="inline-flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name={`branch-mode-${project}`}
+                    value="existing"
+                    checked={branchMode === 'existing'}
+                    onChange={() => setBranchMode('existing')}
+                    disabled={busy}
+                    aria-label="Enviar na branch selecionada"
+                  />
+                  <span>
+                    <strong>Enviar na branch selecionada</strong> (<code>{branch || 'main'}</code>)
+                  </span>
+                </label>
+              </div>
+
+              {branchMode === 'create' && (
+                <div>
+                  <label
+                    htmlFor={`new-branch-${project}`}
+                    className="block text-xs font-medium text-slate-700 mb-1"
+                  >
+                    Nome da nova branch
+                  </label>
+                  <input
+                    id={`new-branch-${project}`}
+                    type="text"
+                    aria-label="Nome da nova branch"
+                    placeholder={`update/${project}-YYYYMMDD-HHMMSS`}
+                    value={newBranchName}
+                    onChange={(e) => setNewBranchName(e.target.value)}
+                    disabled={busy}
+                    className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-mono bg-white"
+                  />
+                </div>
+              )}
             </div>
 
             <div className="flex items-center gap-3">

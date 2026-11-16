@@ -3,7 +3,7 @@ import { apiFetch } from '../services/api';
 import EntityTable from './EntityTable';
 import EntityForm from './EntityForm';
 
-export default function EntityPage({ entity, columns, fields }) {
+export default function EntityPage({ entity, columns, fields, apiPrefix = '', basePath = '/dashboard' }) {
   const [data, setData] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
@@ -19,7 +19,7 @@ export default function EntityPage({ entity, columns, fields }) {
   const loadData = async () => {
     try {
       const offset = page * limit;
-      let url = `/${entity}?limit=${limit}&offset=${offset}`;
+      let url = `${apiPrefix}/${entity}?limit=${limit}&offset=${offset}`;
       if (search) url += `&search=${encodeURIComponent(search)}`;
       if (sortCol) url += `&sort=${encodeURIComponent(sortCol)}&order=${sortOrder}`;
       
@@ -31,7 +31,7 @@ export default function EntityPage({ entity, columns, fields }) {
     }
   };
 
-  useEffect(() => { loadData(); }, [entity, page, search, sortCol, sortOrder]);
+  useEffect(() => { loadData(); }, [entity, apiPrefix, page, search, sortCol, sortOrder]);
 
   useEffect(() => {
     setPageInput((page + 1).toString());
@@ -57,13 +57,13 @@ export default function EntityPage({ entity, columns, fields }) {
       // Remove it from URL so refresh doesn't trigger it again
       window.history.replaceState({}, '', window.location.pathname);
       // Fetch and open item
-      apiFetch(`/${entity}/${openId}`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }})
+      apiFetch(`${apiPrefix}/${entity}/${openId}`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }})
         .then(res => {
           if (res && res.id) setEditingItem(res);
         })
         .catch(err => console.error("Could not load deep link:", err));
     }
-  }, [entity]);
+  }, [entity, apiPrefix]);
 
   const handleSave = async (payload) => {
     try {
@@ -72,13 +72,13 @@ export default function EntityPage({ entity, columns, fields }) {
       // a blank id on a new record must never be compared against itself.
       const isEditing = editingItem?.id !== undefined && editingItem?.id !== null;
       if (isEditing) {
-        await apiFetch(`/${entity}/${editingItem.id}`, {
+        await apiFetch(`${apiPrefix}/${entity}/${editingItem.id}`, {
           method: 'PUT',
           body: JSON.stringify(payload),
           headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
         });
       } else {
-        await apiFetch(`/${entity}`, {
+        await apiFetch(`${apiPrefix}/${entity}`, {
           method: 'POST',
           body: JSON.stringify(payload),
           headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
@@ -93,7 +93,7 @@ export default function EntityPage({ entity, columns, fields }) {
 
   const handleDelete = async (id) => {
     try {
-      await apiFetch(`/${entity}/${id}`, {
+      await apiFetch(`${apiPrefix}/${entity}/${id}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
       });
@@ -105,7 +105,7 @@ export default function EntityPage({ entity, columns, fields }) {
 
   const handleMerge = async (ids, resolvedData) => {
     try {
-      await apiFetch(`/merge/${entity}`, {
+      await apiFetch(`${apiPrefix}/merge/${entity}`, {
         method: 'POST',
         body: JSON.stringify({ source_ids: ids, resolved_data: resolvedData }),
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
@@ -118,7 +118,7 @@ export default function EntityPage({ entity, columns, fields }) {
 
   const handleLink = async (parentTable, parentId, childTable, childId) => {
     try {
-      await apiFetch(`/link`, {
+      await apiFetch(`${apiPrefix}/link`, {
         method: 'POST',
         body: JSON.stringify({
           parent_type: parentTable,
@@ -164,6 +164,7 @@ export default function EntityPage({ entity, columns, fields }) {
         <EntityForm 
           initialData={editingItem} 
           fields={fields} 
+          basePath={basePath}
           onSubmit={handleSave} 
           onCancel={() => setEditingItem(null)} 
         />

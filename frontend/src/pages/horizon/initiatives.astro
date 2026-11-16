@@ -1,0 +1,35 @@
+---
+import HorizonDashboard from '../../layouts/HorizonDashboard.astro';
+import EntityPage from '../../components/EntityPage.jsx';
+---
+
+<HorizonDashboard>
+  <EntityPage
+    client:load
+    entity="initiatives"
+    apiPrefix="/horizon-v2"
+    basePath="/horizon"
+    columns={['id', 'name', 'status', 'start_date', 'end_date', 'organization', 'team', 'campus', 'knowledge_areas', 'enrichment']}
+    fields={[
+      { name: 'id', label: 'ID', type: 'number' },
+      { name: 'name', label: 'Nome', required: true },
+      { name: 'status', label: 'Status' },
+      { name: 'description', label: 'Descrição' },
+      { name: 'start_date', label: 'Data de Início' },
+      { name: 'end_date', label: 'Data de Término' },
+      { name: 'initiative_type_id', label: 'Tipo de Iniciativa (ID)', type: 'number' },
+      { name: 'initiative_type', label: 'Tipo de Iniciativa (Vínculo)', type: 'json_readonly' },
+      { name: 'organization_id', label: 'Organização (ID)', type: 'number' },
+      { name: 'organization', label: 'Organização (Vínculo)', type: 'json_readonly' },
+      { name: 'parent_id', label: 'Iniciativa Pai (ID)', type: 'number' },
+      { name: 'team', label: 'Equipe (Vínculos)', type: 'json_readonly' },
+      { name: 'demandante', label: 'Demandante (Vínculos)', type: 'json_readonly' },
+      { name: 'campus', label: 'Campus (Vínculos)', type: 'json_readonly' },
+      { name: 'research_group', label: 'Grupo de Pesquisa (Vínculo)', type: 'json_readonly' },
+      { name: 'knowledge_areas', label: 'Áreas de Conhecimento (Vínculos)', type: 'json_readonly' },
+      { name: 'enrichment', label: 'Enriquecimento SIGPesq (Vínculo)', type: 'json_readonly' },
+      { name: 'external_partner', label: 'Parceiro Externo (Vínculos)', type: 'json_readonly' },
+      { name: 'external_research_group', label: 'Grupo de Pesquisa Externo (Vínculos)', type: 'json_readonly' }
+    ]}
+  />
+</HorizonDashboard>
