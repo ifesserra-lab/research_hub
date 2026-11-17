@@ -8,9 +8,11 @@ CARGO := $(HOME)/.cargo/bin/cargo
 #     does not contain a key named 'antialiasing'
 # Dropping/resetting these variables before `cargo tauri dev` starts prevents both.
 RUN := env -u LD_LIBRARY_PATH -u LD_PRELOAD -u SNAP -u SNAP_NAME \
-  -u GSETTINGS_SCHEMA_DIR -u GTK_PATH -u GIO_MODULE_DIR \
+  -u GSETTINGS_SCHEMA_DIR -u GTK_PATH -u GIO_MODULE_DIR -u GIO_EXTRA_MODULES \
   -u GDK_PIXBUF_MODULE_FILE -u GDK_PIXBUF_MODULEDIR \
-  -u GTK_EXE_PREFIX -u GTK_DATA_PREFIX \
+  -u GTK_EXE_PREFIX -u GTK_DATA_PREFIX -u GTK_IM_MODULE_FILE -u GTK_IM_MODULE \
+  -u LOCPATH -u GIT_ASKPASS -u VSCODE_GIT_ASKPASS_NODE -u VSCODE_GIT_ASKPASS_MAIN \
+  WEBKIT_DISABLE_DMABUF_RENDERER=1 \
   XDG_DATA_DIRS=/usr/local/share:/usr/share:/var/lib/snapd/desktop
 
 .PHONY: build dev run test bundle docker-bundle clean

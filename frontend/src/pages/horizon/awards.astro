@@ -1,0 +1,21 @@
+---
+import HorizonDashboard from '../../layouts/HorizonDashboard.astro';
+import EntityPage from '../../components/EntityPage.jsx';
+---
+
+<HorizonDashboard>
+  <EntityPage
+    client:load
+    entity="awards"
+    apiPrefix="/horizon-v2"
+    basePath="/horizon"
+    columns={['id', 'researcher_id', 'title', 'year', 'campus']}
+    fields={[
+      { name: 'id', label: 'ID', type: 'number' },
+      { name: 'researcher_id', label: 'Pesquisador (ID)', type: 'number' },
+      { name: 'title', label: 'Título', required: true },
+      { name: 'year', label: 'Ano', type: 'number' },
+      { name: 'campus', label: 'Campus (Vínculos)', type: 'json_readonly' }
+    ]}
+  />
+</HorizonDashboard>

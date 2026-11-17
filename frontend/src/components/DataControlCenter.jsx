@@ -2,21 +2,30 @@ import React, { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
+import { apiFetch, onHorizonV2ImportProgress } from '../services/api.js';
 
-// SEP-018. The file dialog is opened in Rust, so this component never touches
+// SEP-018 / SEP-039. The file dialog is opened in Rust, so this component never touches
 // the filesystem and the app declares no filesystem permission.
-export default function DataControlCenter() {
+// When `apiPrefix === '/horizon-v2'`, import/export and progress events route through
+// `frontend/src/services/api.js` (Principle VI) into the isolated Horizon v2 workspace.
+export default function DataControlCenter({ apiPrefix = '' }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState(null);
   const [progress, setProgress] = useState([]);
   const [exporting, setExporting] = useState(false);
 
+  const isHorizonV2 = apiPrefix === '/horizon-v2';
+
   useEffect(() => {
-    const unlisten = listen('import://progress', (event) => {
-      setProgress((prev) => [...prev, event.payload]);
-    });
+    const unlisten = isHorizonV2
+      ? onHorizonV2ImportProgress((payload) => {
+          setProgress((prev) => [...prev, payload]);
+        })
+      : listen('import://progress', (event) => {
+          setProgress((prev) => [...prev, event.payload]);
+        });
     return () => { unlisten.then((off) => off()); };
-  }, []);
+  }, [isHorizonV2]);
 
   // Dropping the archive on the window follows the same path as the dialog.
   useEffect(() => {
@@ -27,14 +36,19 @@ export default function DataControlCenter() {
       }
     });
     return () => { unlisten.then((off) => off()); };
-  }, [busy]);
+  }, [busy, isHorizonV2]);
 
   async function runImport(path) {
     setBusy(true);
     setMessage(null);
     setProgress([]);
     try {
-      const summary = await invoke('import_canonical_zip', { path: path ?? null });
+      const summary = isHorizonV2
+        ? await apiFetch(`${apiPrefix}/import`, {
+            method: 'POST',
+            body: JSON.stringify({ path: path ?? null }),
+          })
+        : await invoke('import_canonical_zip', { path: path ?? null });
       if (summary === null) {
         setBusy(false);
         return; // dialog dismissed
@@ -44,6 +58,7 @@ export default function DataControlCenter() {
         text: `${summary.total_rows.toLocaleString('pt-BR')} registros em ${summary.tables.length} tabelas.`,
         snapshot: summary.snapshot,
       });
+      window.dispatchEvent(new CustomEvent('horizon:imported', { detail: summary }));
     } catch (err) {
       setMessage({ type: 'error', text: err?.message ?? String(err) });
     } finally {
@@ -55,7 +70,9 @@ export default function DataControlCenter() {
     setExporting(true);
     setMessage(null);
     try {
-      const summary = await invoke('export_canonical_zip');
+      const summary = isHorizonV2
+        ? await apiFetch(`${apiPrefix}/export`, { method: 'POST' })
+        : await invoke('export_canonical_zip');
       if (summary === null) return; // dialog dismissed
       setMessage({
         type: 'success',

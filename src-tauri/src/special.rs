@@ -50,6 +50,30 @@ pub fn merge(
     Ok(merged)
 }
 
+/// Merge several records in Horizon v2 (`hv2_*` tables) into the first, then remove the rest (SEP-039).
+pub fn hv2_merge(
+    conn: &mut Connection,
+    route: &str,
+    source_ids: &[i64],
+    resolved: &Record,
+) -> Result<Record, AppError> {
+    registry::by_horizon_v2_route(route)?;
+    let Some((&primary, rest)) = source_ids.split_first() else {
+        return Err(AppError::Internal("nenhum registro para fundir".into()));
+    };
+
+    let tx = conn.transaction()?;
+    let merged = crud::hv2_update(&tx, route, primary, resolved)?;
+    for id in rest {
+        match crud::hv2_delete(&tx, route, *id) {
+            Ok(()) | Err(AppError::NotFound) => {}
+            Err(e) => return Err(e),
+        }
+    }
+    tx.commit()?;
+    Ok(merged)
+}
+
 /// Append a child reference to the parent's JSON array column.
 pub fn link(
     conn: &Connection,
@@ -101,6 +125,57 @@ pub fn link(
     let mut payload = Record::new();
     payload.insert(column.to_string(), Json::String(serde_json::to_string(&items)?));
     crud::update(conn, parent_route, parent_id, &payload)
+}
+
+/// Append a child reference to the parent's JSON array column in Horizon v2 (`hv2_*` tables) (SEP-039).
+pub fn hv2_link(
+    conn: &Connection,
+    parent_route: &str,
+    parent_id: i64,
+    child_route: &str,
+    child_id: i64,
+) -> Result<Record, AppError> {
+    let parent_def = registry::by_horizon_v2_route(parent_route)?;
+    let child_def = registry::by_horizon_v2_route(child_route)?;
+
+    let parent = crud::hv2_get(conn, parent_route, parent_id)?;
+    let child = crud::hv2_get(conn, child_route, child_id)?;
+
+    let column = target_column(child_route);
+    if !parent_def.has_column(column) {
+        return Err(AppError::InvalidColumn(format!(
+            "Operação inválida: Não é possível vincular '{}' diretamente a '{}'.",
+            child_def.table, parent_def.table
+        )));
+    }
+
+    let mut items: Vec<Json> = parent
+        .get(column)
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .and_then(|s| serde_json::from_str::<Json>(s).ok())
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default();
+
+    if items
+        .iter()
+        .any(|r| r.get("id").and_then(|i| i.as_i64()) == Some(child_id))
+    {
+        return Ok(parent);
+    }
+
+    let label = child
+        .get("name")
+        .or_else(|| child.get("title"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("{child_route} {child_id}"));
+
+    items.push(json!({ "id": child_id, "name": label }));
+
+    let mut payload = Record::new();
+    payload.insert(column.to_string(), Json::String(serde_json::to_string(&items)?));
+    crud::hv2_update(conn, parent_route, parent_id, &payload)
 }
 
 impl From<serde_json::Error> for AppError {
@@ -242,5 +317,42 @@ mod tests {
         // 4242 never existed; the merge should still complete.
         merge(&mut conn, "groups", &[7, 4242], &resolved).unwrap();
         assert_eq!(crud::get(&conn, "groups", 7).unwrap()["name"], json!("Unificado"));
+    }
+
+    /// SEP-039 T012: hv2_merge and hv2_link operate exclusively on `hv2_*` tables
+    /// without touching the legacy tables.
+    #[test]
+    fn hv2_merge_and_link_operate_on_isolated_tables() {
+        let mut conn = seeded();
+        conn.execute(
+            "INSERT INTO hv2_researchers (id, name, research_groups) VALUES (1, 'Carlos V2', NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute("INSERT INTO hv2_research_groups (id, name) VALUES (7, 'Grupo V2 A')", [])
+            .unwrap();
+        conn.execute("INSERT INTO hv2_research_groups (id, name) VALUES (8, 'Grupo V2 B')", [])
+            .unwrap();
+
+        // Link in hv2
+        hv2_link(&conn, "researchers", 1, "groups", 7).unwrap();
+        let r_v2 = crud::hv2_get(&conn, "researchers", 1).unwrap();
+        let groups_v2: Vec<Json> = serde_json::from_str(r_v2["research_groups"].as_str().unwrap()).unwrap();
+        assert_eq!(groups_v2.len(), 1);
+        assert_eq!(groups_v2[0]["name"], "Grupo V2 A");
+
+        // Legacy researcher 1 must still have NULL research_groups
+        let r_legacy = crud::get(&conn, "researchers", 1).unwrap();
+        assert!(r_legacy["research_groups"].is_null());
+
+        // Merge in hv2
+        let mut resolved = Record::new();
+        resolved.insert("name".into(), json!("Grupo V2 Unificado"));
+        let merged = hv2_merge(&mut conn, "groups", &[7, 8], &resolved).unwrap();
+        assert_eq!(merged["name"], json!("Grupo V2 Unificado"));
+        assert!(crud::hv2_get(&conn, "groups", 8).is_err());
+
+        // Legacy group 8 must still exist untouched
+        assert_eq!(crud::get(&conn, "groups", 8).unwrap()["name"], json!("Grupo B"));
     }
 }

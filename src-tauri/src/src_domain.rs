@@ -324,9 +324,22 @@ pub fn list_acoes(
     sort: Option<&str>,
     order: Option<&str>,
 ) -> Result<SrcAcaoPage, AppError> {
+    list_acoes_filtered(conn, limit, offset, search, sort, order, None)
+}
+
+pub fn list_acoes_filtered(
+    conn: &Connection,
+    limit: Option<i64>,
+    offset: Option<i64>,
+    search: Option<&str>,
+    sort: Option<&str>,
+    order: Option<&str>,
+    filters: Option<&str>,
+) -> Result<SrcAcaoPage, AppError> {
     const DEFAULT_LIMIT: i64 = 100;
     const MAX_LIMIT: i64 = 1000;
     let def = crate::registry::by_src_route("src_acoes")?;
+    let filter_spec = crate::analytics::parse_filter_spec(filters);
 
     // Whitelist the sort column: fail typed instead of interpolating SQL.
     let sort = match sort {
@@ -354,22 +367,61 @@ pub fn list_acoes(
         )));
     }
 
+    let limit = limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
+    let offset = offset.unwrap_or(0).max(0);
+    let cols: Vec<&str> = def.columns.iter().filter(|c| **c != "raw_json").copied().collect();
+
+    if !filter_spec.is_empty() {
+        let sql = format!(
+            "SELECT {} FROM src_acoes {where_clause} ORDER BY {sort} {dir}, id ASC",
+            cols.join(", ")
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(params.iter()), |r| {
+                let mut record = Record::new();
+                for (i, col) in cols.iter().enumerate() {
+                    let v: rusqlite::types::Value = r.get(i)?;
+                    record.insert(
+                        col.to_string(),
+                        match v {
+                            rusqlite::types::Value::Null => Json::Null,
+                            rusqlite::types::Value::Text(s) => Json::from(s),
+                            rusqlite::types::Value::Integer(i) => Json::from(i),
+                            rusqlite::types::Value::Real(f) => Json::from(f),
+                            rusqlite::types::Value::Blob(_) => Json::Null,
+                        },
+                    );
+                }
+                Ok(record)
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        let filtered: Vec<Record> = rows
+            .into_iter()
+            .filter(|rec| crate::analytics::record_matches_filter_spec(rec, &filter_spec))
+            .collect();
+        let total = filtered.len() as i64;
+        let items = filtered
+            .into_iter()
+            .skip(offset as usize)
+            .take(limit as usize)
+            .collect();
+        return Ok(SrcAcaoPage { items, total });
+    }
+
     let total: i64 = conn.query_row(
         &format!("SELECT COUNT(*) FROM src_acoes {where_clause}"),
         rusqlite::params_from_iter(params.iter()),
         |r| r.get(0),
     )?;
 
-    let limit = limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
-    let offset = offset.unwrap_or(0).max(0);
     let mut sql = format!(
         "SELECT {} FROM src_acoes {where_clause} ORDER BY {sort} {dir}, id ASC LIMIT {limit} OFFSET {offset}",
-        def.columns.iter().filter(|c| **c != "raw_json").map(|c| c.to_string()).collect::<Vec<_>>().join(", ")
+        cols.join(", ")
     );
     sql.push_str(""); // keep the format expression tied to the statement above
 
     let mut stmt = conn.prepare(&sql)?;
-    let cols: Vec<&str> = def.columns.iter().filter(|c| **c != "raw_json").copied().collect();
     let rows = stmt
         .query_map(rusqlite::params_from_iter(params.iter()), |r| {
             let mut record = Record::new();
@@ -1497,6 +1549,23 @@ mod tests {
         // Projeções continuam presentes para a ordenação/agrupamento da UI.
         assert!(primeira.get("ord").is_some());
         assert!(primeira.get("id").is_some());
+    }
+
+    #[test]
+    fn list_acoes_filtered_applies_and_or_column_filters() {
+        let (mut conn, dir) = fixture();
+        import(&mut conn, &consolidated_fixture(), dir.path()).unwrap();
+
+        let and_filter = r#"{"logic":"and","rules":[{"field":"natureza","operator":"equals","value":"Extensão"}]}"#;
+        let page = list_acoes_filtered(&conn, None, None, None, None, None, Some(and_filter)).unwrap();
+        assert!(page.total >= 1);
+        for item in &page.items {
+            assert_eq!(item["natureza"], Json::from("Extensão"));
+        }
+
+        let empty_filter = r#"{"logic":"and","rules":[{"field":"natureza","operator":"equals","value":"Inexistente"}]}"#;
+        let page_empty = list_acoes_filtered(&conn, None, None, None, None, None, Some(empty_filter)).unwrap();
+        assert_eq!(page_empty.total, 0);
     }
 
     // ---------- T041: desempenho (SC-006) ----------

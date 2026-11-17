@@ -1,0 +1,21 @@
+---
+import HorizonDashboard from '../../layouts/HorizonDashboard.astro';
+import EntityPage from '../../components/EntityPage.jsx';
+---
+
+<HorizonDashboard>
+  <EntityPage
+    client:load
+    entity="fellowships"
+    apiPrefix="/horizon-v2"
+    basePath="/horizon"
+    columns={['id', 'name', 'value', 'campus']}
+    fields={[
+      { name: 'id', label: 'ID', type: 'number' },
+      { name: 'name', label: 'Nome', required: true },
+      { name: 'description', label: 'Descrição' },
+      { name: 'value', label: 'Valor' },
+      { name: 'campus', label: 'Campus (Vínculos)', type: 'json_readonly' }
+    ]}
+  />
+</HorizonDashboard>

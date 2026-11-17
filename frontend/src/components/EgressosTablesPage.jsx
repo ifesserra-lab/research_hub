@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiFetch } from '../services/api.js';
+import TableAnalyticsPanel from './TableAnalyticsPanel.jsx';
+import FilterBuilderBar, { serializeFilterSpec } from './FilterBuilderBar.jsx';
+import CustomChartModal from './CustomChartModal.jsx';
 
 function formatCellValue(val) {
   if (val === null || val === undefined) return '—';
@@ -41,6 +44,9 @@ export default function EgressosTablesPage() {
   const [appliedSearch, setAppliedSearch] = useState('');
   const [sortCol, setSortCol] = useState('');
   const [sortOrder, setSortOrder] = useState('asc');
+  const [filterSpec, setFilterSpec] = useState({ logic: 'and', rules: [] });
+  const [chartModalOpen, setChartModalOpen] = useState(false);
+  const [forceOpenAnalytics, setForceOpenAnalytics] = useState(0);
   const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(false);
   const [feedback, setFeedback] = useState(null);
@@ -89,6 +95,8 @@ export default function EgressosTablesPage() {
   const effectiveSection =
     activeSection || currentFileDef?.primary_section || '';
 
+  const serializedFilters = serializeFilterSpec(filterSpec);
+
   const loadRows = useCallback(async () => {
     if (!activeFileKey || !effectiveSection) return;
     setLoading(true);
@@ -101,6 +109,9 @@ export default function EgressosTablesPage() {
       if (sortCol) {
         qs.set('sort', sortCol);
         qs.set('order', sortOrder);
+      }
+      if (serializedFilters) {
+        qs.set('filters', serializedFilters);
       }
       const res = await apiFetch(`/egressos/files/${activeFileKey}/rows?${qs.toString()}`);
       if (res) {
@@ -119,7 +130,7 @@ export default function EgressosTablesPage() {
     } finally {
       setLoading(false);
     }
-  }, [activeFileKey, effectiveSection, offset, appliedSearch, sortCol, sortOrder, currentFileDef]);
+  }, [activeFileKey, effectiveSection, offset, appliedSearch, sortCol, sortOrder, serializedFilters, currentFileDef]);
 
   useEffect(() => {
     if (catalog && activeFileKey && effectiveSection) {
@@ -415,6 +426,35 @@ export default function EgressosTablesPage() {
           </div>
         )}
       </div>
+
+      {/* Painel expansível de gráficos específicos da tabela ativa (SEP-040 FR-006 / FR-010) */}
+      <TableAnalyticsPanel
+        endpoint={`/egressos/analytics?file=${encodeURIComponent(activeFileKey)}`}
+        label={currentFileDef?.title || activeFileKey}
+        externalFilterSpec={filterSpec}
+        fallbackColumns={columns}
+        forceOpenSignal={forceOpenAnalytics}
+      />
+
+      <FilterBuilderBar
+        columns={columns}
+        filterSpec={filterSpec}
+        onChange={(nextSpec) => {
+          setFilterSpec(nextSpec);
+          setOffset(0);
+        }}
+        onCreateChart={() => setChartModalOpen(true)}
+      />
+
+      <CustomChartModal
+        open={chartModalOpen}
+        scope="egressos"
+        defaultEntity={activeFileKey}
+        fallbackColumns={columns}
+        initialFilterSpec={filterSpec}
+        onClose={() => setChartModalOpen(false)}
+        onCreated={() => setForceOpenAnalytics((v) => v + 1)}
+      />
 
       {/* Barra de ferramentas: busca, propagação na exclusão, metadados e novo registro */}
       <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-wrap items-center justify-between gap-4">

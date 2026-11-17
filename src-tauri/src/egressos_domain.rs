@@ -1272,7 +1272,22 @@ pub fn list_rows(
     sort: Option<&str>,
     order: Option<&str>,
 ) -> Result<EgressosRowPage, AppError> {
+    list_rows_filtered(conn, file_key, section_key, limit, offset, search, sort, order, None)
+}
+
+pub fn list_rows_filtered(
+    conn: &Connection,
+    file_key: &str,
+    section_key: Option<&str>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+    search: Option<&str>,
+    sort: Option<&str>,
+    order: Option<&str>,
+    filters: Option<&str>,
+) -> Result<EgressosRowPage, AppError> {
     let def = by_file_key(file_key)?;
+    let filter_spec = crate::analytics::parse_filter_spec(filters);
     let sec = section_key
         .map(str::trim)
         .filter(|s| !s.is_empty())
@@ -1312,7 +1327,11 @@ pub fn list_rows(
                 continue;
             }
         }
-        filtered.push(row_to_record(id, rk, &raw)?);
+        let rec = row_to_record(id, rk, &raw)?;
+        if !filter_spec.is_empty() && !crate::analytics::record_matches_filter_spec(&rec, &filter_spec) {
+            continue;
+        }
+        filtered.push(rec);
     }
 
     if let Some(sort_col) = sort.map(str::trim).filter(|s| !s.is_empty()) {
@@ -2320,5 +2339,20 @@ mod tests {
         patch_emp.insert("porte".into(), json!("Big Tech Global"));
         let res_emp = update_row(&mut conn, id_emp, &patch_emp, true).unwrap();
         assert!(res_emp.propagated_count >= 1);
+
+        let filter_emp = r#"{"logic":"and","rules":[{"field":"porte","operator":"equals","value":"Big Tech Global"}]}"#;
+        let filtered_emp = list_rows_filtered(
+            &conn,
+            "empresas_porte",
+            Some("_root"),
+            Some(50),
+            Some(0),
+            None,
+            None,
+            None,
+            Some(filter_emp),
+        )
+        .unwrap();
+        assert_eq!(filtered_emp.total, 1);
     }
 }

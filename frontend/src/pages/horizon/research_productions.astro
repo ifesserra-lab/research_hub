@@ -1,0 +1,29 @@
+---
+import HorizonDashboard from '../../layouts/HorizonDashboard.astro';
+import EntityPage from '../../components/EntityPage.jsx';
+---
+
+<HorizonDashboard>
+  <EntityPage
+    client:load
+    entity="research_productions"
+    apiPrefix="/horizon-v2"
+    basePath="/horizon"
+    columns={['id', 'title', 'year', 'publisher', 'isbn', 'platform', 'campus']}
+    fields={[
+      { name: 'id', label: 'ID', type: 'number' },
+      { name: 'title', label: 'Título', required: true },
+      { name: 'year', label: 'Ano', type: 'number' },
+      { name: 'production_type_id', label: 'Tipo de Produção (ID)', type: 'number' },
+      { name: 'publisher', label: 'Editora' },
+      { name: 'isbn', label: 'ISBN' },
+      { name: 'edition', label: 'Edição' },
+      { name: 'book_title', label: 'Título do Livro' },
+      { name: 'pages', label: 'Páginas' },
+      { name: 'version', label: 'Versão' },
+      { name: 'platform', label: 'Plataforma' },
+      { name: 'link', label: 'Link' },
+      { name: 'campus', label: 'Campus (Vínculos)', type: 'json_readonly' }
+    ]}
+  />
+</HorizonDashboard>

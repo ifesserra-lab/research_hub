@@ -10,6 +10,10 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/001_init.sql"),
     include_str!("../migrations/002_src_tables.sql"),
     include_str!("../migrations/003_egressos_tables.sql"),
+    include_str!("../migrations/004_egressos_dados_tables.sql"),
+    include_str!("../migrations/005_horizon_v2_tables.sql"),
+    include_str!("../migrations/006_person_linkedin_url.sql"),
+    include_str!("../migrations/007_custom_dashboard_charts.sql"),
 ];
 
 pub const DEFAULT_ADMIN_USERNAME: &str = "admin@admin.com";
@@ -116,6 +120,8 @@ mod tests {
     /// SC-001: the schema is verified by querying it, not by reading the file.
     /// SEP-033: +3 tabelas do domínio SRC (src_meta, src_acoes, src_participacoes).
     /// SEP-035: +2 tabelas do domínio Egressos (egressos_files, egressos_rows).
+    /// SEP-037: +2 tabelas do domínio Egressos-Dados (egressos_dados_files, egressos_dados_rows).
+    /// SEP-039: +15 tabelas do domínio Horizon v2 (hv2_*).
     #[test]
     fn migration_creates_nineteen_tables() {
         let conn = open_in_memory().unwrap();
@@ -128,8 +134,124 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            count, 21,
-            "esperado 21 tabelas (15 exportadas + admins + 3 do domínio SRC + 2 do domínio Egressos)"
+            count, 39,
+            "esperado 39 tabelas (15 exportadas Legacy + admins + 3 SRC + 2 Egressos + 2 Egressos-Dados + 15 Horizon v2 + 1 custom_dashboard_charts)"
+        );
+    }
+
+    #[test]
+    fn migration_creates_custom_dashboard_charts_table() {
+        let conn = open_in_memory().unwrap();
+        let cols = table_columns(&conn, "custom_dashboard_charts");
+        for col in [
+            "id",
+            "scope",
+            "entity",
+            "title",
+            "group_by",
+            "metric",
+            "metric_field",
+            "kind",
+            "filter_logic",
+            "filters_json",
+            "created_at",
+        ] {
+            assert!(
+                cols.iter().any(|c| c == col),
+                "custom_dashboard_charts: coluna '{col}' ausente"
+            );
+        }
+    }
+
+    #[test]
+    fn horizon_v2_registry_and_schema_agree() {
+        let conn = open_in_memory().unwrap();
+        for def in registry::HORIZON_V2_ENTITIES {
+            let actual = table_columns(&conn, def.table);
+            assert!(!actual.is_empty(), "tabela ausente: {}", def.table);
+
+            for declared in def.columns {
+                assert!(
+                    actual.iter().any(|c| c == declared),
+                    "{}: registry declara '{}', ausente no schema",
+                    def.table,
+                    declared
+                );
+            }
+            for existing in &actual {
+                assert!(
+                    def.has_column(existing),
+                    "{}: schema tem '{}', ausente no registry",
+                    def.table,
+                    existing
+                );
+            }
+        }
+        assert_eq!(table_columns(&conn, "hv2_researchers").len(), 22);
+        assert!(table_columns(&conn, "hv2_researchers").iter().any(|c| c == "linkedin_url"));
+        assert_eq!(table_columns(&conn, "hv2_students").len(), 22);
+        assert!(table_columns(&conn, "hv2_students").iter().any(|c| c == "linkedin_url"));
+    }
+
+    /// SEP-037 T002: o domínio Egressos-Dados tem tabelas próprias (`egressos_dados_files` e
+    /// `egressos_dados_rows`) com FK ON DELETE CASCADE, isoladas de Horizon, SRC e Egressos.
+    #[test]
+    fn migration_creates_egressos_dados_domain_tables() {
+        let conn = open_in_memory().unwrap();
+
+        let files = table_columns(&conn, "egressos_dados_files");
+        for col in [
+            "file_key",
+            "kind",
+            "primary_section",
+            "envelope_json",
+            "imported_at",
+        ] {
+            assert!(
+                files.iter().any(|c| c == col),
+                "egressos_dados_files: coluna '{col}' ausente"
+            );
+        }
+
+        let rows = table_columns(&conn, "egressos_dados_rows");
+        for col in [
+            "id",
+            "file_key",
+            "section_key",
+            "ord",
+            "record_key",
+            "search_text",
+            "raw_json",
+        ] {
+            assert!(
+                rows.iter().any(|c| c == col),
+                "egressos_dados_rows: coluna '{col}' ausente"
+            );
+        }
+
+        conn.execute(
+            "INSERT INTO egressos_dados_files (file_key, kind, primary_section, envelope_json) \
+             VALUES ('alunos', 'object_sections', 'alunos', '{}')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO egressos_dados_rows (file_key, section_key, ord, record_key, search_text, raw_json) \
+             VALUES ('alunos', 'alunos', 0, 'barbosa', 'barbosa matheus', '{}')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "DELETE FROM egressos_dados_files WHERE file_key = 'alunos'",
+            [],
+        )
+        .unwrap();
+        let remaining: i64 = conn
+            .query_row("SELECT COUNT(*) FROM egressos_dados_rows", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            remaining, 0,
+            "egressos_dados_rows deve sofrer cascade ao remover egressos_dados_files"
         );
     }
 

@@ -1,0 +1,24 @@
+---
+import HorizonDashboard from '../../layouts/HorizonDashboard.astro';
+import EntityPage from '../../components/EntityPage.jsx';
+---
+
+<HorizonDashboard>
+  <EntityPage
+    client:load
+    entity="proficiencies"
+    apiPrefix="/horizon-v2"
+    basePath="/horizon"
+    columns={['id', 'researcher_id', 'language_id', 'comprehension', 'speaking', 'reading', 'writing', 'campus']}
+    fields={[
+      { name: 'id', label: 'ID', type: 'number' },
+      { name: 'researcher_id', label: 'Pesquisador (ID)', type: 'number' },
+      { name: 'language_id', label: 'Idioma (ID)', type: 'number' },
+      { name: 'comprehension', label: 'Compreensão' },
+      { name: 'speaking', label: 'Fala' },
+      { name: 'reading', label: 'Leitura' },
+      { name: 'writing', label: 'Escrita' },
+      { name: 'campus', label: 'Campus (Vínculos)', type: 'json_readonly' }
+    ]}
+  />
+</HorizonDashboard>

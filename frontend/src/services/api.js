@@ -9,6 +9,51 @@ import { listen } from '@tauri-apps/api/event';
 // `/link` must precede the generic `/{entity}` POST, or it would be read as a
 // request to create an entity named "link".
 const ROUTES = [
+  // SEP-040 / SEP-041: status dos 5 ambientes, rotas analíticas multidomínio e gráficos personalizados
+  [/^\/projects\/status$/, 'GET', () =>
+    invoke('projects_status')],
+
+  [/^\/custom-charts$/, 'POST', (_m, b) =>
+    invoke('create_custom_chart', { payload: b ?? {} })],
+
+  [/^\/custom-charts$/, 'GET', (_m, _b, q) =>
+    invoke('list_custom_charts', {
+      scope: q.get('scope') ?? '',
+      entity: q.get('entity') ?? null,
+    })],
+
+  [/^\/custom-charts\/(\d+)$/, 'DELETE', (m) =>
+    invoke('delete_custom_chart', { id: Number(m[1]) })],
+
+  [/^\/horizon-v2\/analytics$/, 'GET', (_m, _b, q) =>
+    invoke('hv2_get_analytics', {
+      entity: q.get('entity') ?? null,
+      ...(q.has('filters') ? { filters: q.get('filters') } : {}),
+    })],
+
+  [/^\/analytics$/, 'GET', (_m, _b, q) =>
+    invoke('get_horizon_analytics', {
+      entity: q.get('entity') ?? null,
+      ...(q.has('filters') ? { filters: q.get('filters') } : {}),
+    })],
+
+  [/^\/src\/analytics$/, 'GET', (_m, _b, q) =>
+    q.has('filters')
+      ? invoke('src_get_analytics', { filters: q.get('filters') })
+      : invoke('src_get_analytics')],
+
+  [/^\/egressos\/analytics$/, 'GET', (_m, _b, q) =>
+    invoke('egressos_get_analytics', {
+      fileKey: q.get('file') ?? null,
+      ...(q.has('filters') ? { filters: q.get('filters') } : {}),
+    })],
+
+  [/^\/egressos-dados\/analytics$/, 'GET', (_m, _b, q) =>
+    invoke('egressos_dados_get_analytics', {
+      fileKey: q.get('file') ?? null,
+      ...(q.has('filters') ? { filters: q.get('filters') } : {}),
+    })],
+
   // SEP-033: dedicated SRC routes must precede the generic /{entity} patterns,
   // or "/src/acoes" would be read as a request to list an entity named "src".
   [/^\/src\/import$/, 'POST', (_m, b) =>
@@ -32,6 +77,7 @@ const ROUTES = [
       search: q.get('search'),
       sort: q.get('sort'),
       order: q.get('order'),
+      ...(q.has('filters') ? { filters: q.get('filters') } : {}),
     })],
 
   [/^\/src\/acoes$/, 'POST', (_m, b) =>
@@ -84,6 +130,7 @@ const ROUTES = [
       search: q.get('search'),
       sort: q.get('sort'),
       order: q.get('order'),
+      ...(q.has('filters') ? { filters: q.get('filters') } : {}),
     })],
 
   [/^\/egressos\/files\/([^/?]+)\/rows$/, 'POST', (m, b, q) =>
@@ -107,6 +154,106 @@ const ROUTES = [
     invoke('egressos_delete_row', {
       id: Number(m[1]),
       propagate: q.get('propagate') === 'true',
+    })],
+
+  // SEP-036: dedicated egressos-dados GitHub organization (`ifesserra-lab`) auth routes
+  [/^\/egressos-dados\/auth\/status$/, 'GET', () =>
+    invoke('egressos_dados_status')],
+
+  [/^\/egressos-dados\/auth\/login$/, 'POST', (_m, b) =>
+    invoke('egressos_dados_login', { token: b?.token ?? '' })],
+
+  [/^\/egressos-dados\/auth\/logout$/, 'DELETE', () =>
+    invoke('egressos_dados_logout')],
+
+  [/^\/egressos-dados\/workspace$/, 'GET', () =>
+    invoke('egressos_dados_get_workspace')],
+
+  // SEP-037: dedicated egressos-dados catalog, CRUD, local import/export, snapshots & GitHub sync
+  [/^\/egressos-dados\/catalog$/, 'GET', () =>
+    invoke('egressos_dados_get_catalog')],
+
+  [/^\/egressos-dados\/files\/([^/?]+)\/rows$/, 'GET', (m, _b, q) =>
+    invoke('egressos_dados_list_rows', {
+      fileKey: m[1],
+      sectionKey: q.get('section') ?? null,
+      limit: q.has('limit') ? Number(q.get('limit')) : null,
+      offset: q.has('offset') ? Number(q.get('offset')) : null,
+      search: q.get('search'),
+      sort: q.get('sort'),
+      order: q.get('order'),
+      ...(q.has('filters') ? { filters: q.get('filters') } : {}),
+    })],
+
+  [/^\/egressos-dados\/files\/([^/?]+)\/rows$/, 'POST', (m, b) =>
+    invoke('egressos_dados_create_row', {
+      fileKey: m[1],
+      sectionKey: b?.section_key ?? b?.sectionKey ?? null,
+      payload: b?.payload ?? b ?? {},
+    })],
+
+  [/^\/egressos-dados\/files\/([^/?]+)\/envelope$/, 'GET', (m) =>
+    invoke('egressos_dados_get_envelope', { fileKey: m[1] })],
+
+  [/^\/egressos-dados\/files\/([^/?]+)\/envelope$/, 'PUT', (m, b) =>
+    invoke('egressos_dados_update_envelope', { fileKey: m[1], payload: b ?? {} })],
+
+  [/^\/egressos-dados\/rows\/(\d+)$/, 'GET', (m) =>
+    invoke('egressos_dados_get_row', { id: Number(m[1]) })],
+
+  [/^\/egressos-dados\/rows\/(\d+)$/, 'PUT', (m, b) =>
+    invoke('egressos_dados_update_row', {
+      id: Number(m[1]),
+      payload: b?.payload ?? b ?? {},
+      propagate: b?.propagate ?? false,
+    })],
+
+  [/^\/egressos-dados\/rows\/(\d+)$/, 'DELETE', (m, _b, q) =>
+    invoke('egressos_dados_delete_row', {
+      id: Number(m[1]),
+      propagate: q.get('propagate') === 'true',
+    })],
+
+  [/^\/egressos-dados\/import$/, 'POST', (_m, b) =>
+    invoke('egressos_dados_import_dir', { path: b?.path ?? null })],
+
+  [/^\/egressos-dados\/export$/, 'POST', (_m, b) =>
+    invoke('egressos_dados_export_dir', { path: b?.path ?? null })],
+
+  [/^\/egressos-dados\/snapshots$/, 'GET', () =>
+    invoke('egressos_dados_list_snapshots')],
+
+  [/^\/egressos-dados\/sync\/config$/, 'GET', () =>
+    invoke('egressos_dados_sync_get_config')],
+
+  [/^\/egressos-dados\/sync\/config$/, 'POST', (_m, b) =>
+    invoke('egressos_dados_sync_set_config', {
+      repo: b?.repo ?? '',
+      branch: b?.branch ?? '',
+      path: b?.path ?? '',
+    })],
+
+  [/^\/egressos-dados\/sync\/branches$/, 'GET', (_m, _b, q) =>
+    invoke('egressos_dados_sync_list_branches', {
+      repo: q.get('repo') ?? null,
+    })],
+
+  [/^\/egressos-dados\/sync\/download$/, 'POST', (_m, b) =>
+    invoke('egressos_dados_sync_download', {
+      sourceUrl: b?.source_url ?? b?.sourceUrl ?? b?.url ?? null,
+      repo: b?.repo ?? null,
+      branch: b?.branch ?? null,
+      path: b?.path ?? null,
+    })],
+
+  [/^\/egressos-dados\/sync\/upload$/, 'POST', (_m, b) =>
+    invoke('egressos_dados_sync_upload', {
+      confirmOverwrite: b?.confirmOverwrite ?? b?.confirm_overwrite ?? true,
+      commitMessage: b?.commitMessage ?? b?.commit_message ?? null,
+      createNewBranch: b?.createNewBranch ?? b?.create_new_branch ?? false,
+      baseBranch: b?.baseBranch ?? b?.base_branch ?? null,
+      newBranch: b?.newBranch ?? b?.new_branch ?? null,
+      targetBranch: b?.targetBranch ?? b?.target_branch ?? null,
     })],
 
   [/^\/auth\/login$/, 'POST', (_m, b) =>
@@ -146,9 +293,20 @@ const ROUTES = [
   [/^\/github\/check$/, 'GET', (_m, _b, q) =>
     invoke('github_check_destination', { project: q.get('project') })],
 
+  [/^\/github\/branches$/, 'GET', (_m, _b, q) =>
+    invoke('github_list_branches', {
+      project: q.get('project'),
+      repo: q.get('repo') ?? null,
+    })],
+
   [/^\/github\/upload$/, 'POST', (_m, b) =>
     invoke('github_upload', {
-      project: b.project, confirmOverwrite: b?.confirmOverwrite ?? false,
+      project: b.project,
+      confirmOverwrite: b?.confirmOverwrite ?? false,
+      createNewBranch: b?.createNewBranch ?? b?.create_new_branch ?? false,
+      baseBranch: b?.baseBranch ?? b?.base_branch ?? null,
+      newBranch: b?.newBranch ?? b?.new_branch ?? null,
+      targetBranch: b?.targetBranch ?? b?.target_branch ?? null,
     })],
 
   [/^\/github\/token$/, 'POST', (_m, b) =>
@@ -159,6 +317,47 @@ const ROUTES = [
 
   [/^\/github\/token\/test$/, 'POST', () =>
     invoke('github_test_token')],
+
+  // SEP-039: dedicated Horizon v2 routes (must precede generic /{entity} routes)
+  [/^\/horizon-v2\/import$/, 'POST', (_m, b) =>
+    invoke('import_horizon_v2_zip', { path: b?.path ?? null })],
+
+  [/^\/horizon-v2\/export$/, 'POST', () =>
+    invoke('export_horizon_v2_zip')],
+
+  [/^\/horizon-v2\/merge\/([^/?]+)$/, 'POST', (m, b) =>
+    invoke('hv2_merge_entities', {
+      entity: m[1], sourceIds: b.source_ids, resolvedData: b.resolved_data,
+    })],
+
+  [/^\/horizon-v2\/link$/, 'POST', (_m, b) =>
+    invoke('hv2_link_entities', {
+      parentType: b.parent_type, parentId: b.parent_id,
+      childType: b.child_type, childId: b.child_id,
+    })],
+
+  [/^\/horizon-v2\/([^/?]+)\/(\d+)$/, 'GET', (m) =>
+    invoke('hv2_get_entity', { entity: m[1], id: Number(m[2]) })],
+
+  [/^\/horizon-v2\/([^/?]+)\/(\d+)$/, 'PUT', (m, b) =>
+    invoke('hv2_update_entity', { entity: m[1], id: Number(m[2]), payload: b })],
+
+  [/^\/horizon-v2\/([^/?]+)\/(\d+)$/, 'DELETE', (m) =>
+    invoke('hv2_delete_entity', { entity: m[1], id: Number(m[2]) })],
+
+  [/^\/horizon-v2\/([^/?]+)$/, 'POST', (m, b) =>
+    invoke('hv2_create_entity', { entity: m[1], payload: b ?? {} })],
+
+  [/^\/horizon-v2\/([^/?]+)$/, 'GET', (m, _b, q) =>
+    invoke('hv2_list_entities', {
+      entity: m[1],
+      limit: q.has('limit') ? Number(q.get('limit')) : null,
+      offset: q.has('offset') ? Number(q.get('offset')) : null,
+      search: q.get('search'),
+      sort: q.get('sort'),
+      order: q.get('order'),
+      ...(q.has('filters') ? { filters: q.get('filters') } : {}),
+    })],
 
   [/^\/([^/?]+)\/(\d+)$/, 'GET', (m) =>
     invoke('get_entity', { entity: m[1], id: Number(m[2]) })],
@@ -180,6 +379,7 @@ const ROUTES = [
       search: q.get('search'),
       sort: q.get('sort'),
       order: q.get('order'),
+      ...(q.has('filters') ? { filters: q.get('filters') } : {}),
     })],
 ];
 
@@ -235,6 +435,20 @@ export function onSyncProgress(callback) {
 // SEP-035: encapsula o listener de egressos-import://progress mantendo a fronteira única.
 export function onEgressosImportProgress(callback) {
   return listen('egressos-import://progress', (event) => {
+    callback(event.payload);
+  });
+}
+
+// SEP-037: encapsula o listener de egressos-dados-import://progress mantendo a fronteira única.
+export function onEgressosDadosImportProgress(callback) {
+  return listen('egressos-dados-import://progress', (event) => {
+    callback(event.payload);
+  });
+}
+
+// SEP-039: encapsula o listener de horizon-v2-import://progress mantendo a fronteira única.
+export function onHorizonV2ImportProgress(callback) {
+  return listen('horizon-v2-import://progress', (event) => {
     callback(event.payload);
   });
 }

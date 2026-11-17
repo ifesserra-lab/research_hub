@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import MergeModal from './MergeModal';
 import LinkModal from './LinkModal';
+import ProjectStatusBadge from './ProjectStatusBadge';
 
 export default function EntityTable({ entities, entityName, columns, fields = [], sortCol, sortOrder, onSort, onEdit, onDelete, onMerge, onLink }) {
   const [selectedIds, setSelectedIds] = useState([]);
@@ -16,6 +17,9 @@ export default function EntityTable({ entities, entityName, columns, fields = []
   };
 
   const formatCellValue = (val, col) => {
+    if (col === 'status') {
+      return <ProjectStatusBadge status={val} />;
+    }
     // Find field definition to see if it's json_readonly
     const fieldDef = fields.find(f => f.name === col);
     if (fieldDef && fieldDef.type === 'json_readonly') {
@@ -25,7 +29,12 @@ export default function EntityTable({ entities, entityName, columns, fields = []
         if (Array.isArray(parsed)) {
           return `${parsed.length} vínculos`;
         } else if (typeof parsed === 'object' && parsed !== null) {
-          return parsed.name || parsed.title || '-';
+          return (
+            parsed.name ||
+            parsed.title ||
+            (parsed.project_code ? `SIGPesq #${parsed.project_code}` : parsed.source) ||
+            '-'
+          );
         }
       } catch (e) {
         return 'Erro';

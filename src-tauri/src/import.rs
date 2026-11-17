@@ -13,6 +13,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 pub const ORIGINAL_ARCHIVE: &str = "original.zip";
+pub const HORIZON_V2_ORIGINAL_ARCHIVE: &str = "horizon_v2_original.zip";
 
 #[derive(serde::Serialize, Clone, Debug)]
 pub struct TableLoaded {
@@ -60,8 +61,11 @@ pub fn snapshot(conn: &Connection, data_dir: &Path) -> Result<PathBuf, AppError>
     snapshot_with_prefix(conn, data_dir, "hub")
 }
 
-fn has_any_rows(conn: &Connection) -> Result<bool, AppError> {
-    for def in registry::exported() {
+fn has_any_rows_for<'a>(
+    conn: &Connection,
+    entities: impl Iterator<Item = &'a registry::EntityDef>,
+) -> Result<bool, AppError> {
+    for def in entities {
         let n: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM {}", def.table), [], |r| r.get(0))?;
         if n > 0 {
             return Ok(true);
@@ -70,19 +74,13 @@ fn has_any_rows(conn: &Connection) -> Result<bool, AppError> {
     Ok(false)
 }
 
-/// Read the archive and load every canonical table it carries.
-///
-/// For each managed table the source is `{table}_canonical.json` at the root,
-/// falling back to the legacy `parquet/{table}_canonical.parquet`; when both
-/// exist the JSON wins (SEP-032, FR-006). A managed table with neither file
-/// aborts the import before anything destructive happens (FR-014).
-///
-/// `on_table` is called as each table finishes, so the caller can emit progress
-/// without this module knowing anything about Tauri.
-pub fn import_archive<F>(
+fn import_archive_with_defs<F>(
     conn: &mut Connection,
     archive_bytes: &[u8],
     data_dir: &Path,
+    entities: &'static [registry::EntityDef],
+    snapshot_prefix: &str,
+    original_archive_name: &str,
     mut on_table: F,
 ) -> Result<ImportSummary, AppError>
 where
@@ -145,10 +143,13 @@ where
         Parquet(String),
     }
 
+    let exported_defs: Vec<&'static registry::EntityDef> = entities.iter().filter(|e| e.exported).collect();
+
     let mut missing: Vec<&'static str> = Vec::new();
     let mut sources: Vec<(&'static registry::EntityDef, Source)> = Vec::new();
-    for def in registry::exported() {
-        let base = format!("{}_canonical", def.table);
+    for def in &exported_defs {
+        let canon = def.canonical_table();
+        let base = format!("{canon}_canonical");
         let json_path = format!("{base}.json");
         let parquet_path = format!("parquet/{base}.parquet");
         let parquet_file = format!("{base}.parquet");
@@ -166,9 +167,9 @@ where
         };
 
         if let Some(source) = matched {
-            sources.push((def, source));
+            sources.push((*def, source));
         } else {
-            missing.push(def.table);
+            missing.push(canon);
         }
     }
     if !missing.is_empty() {
@@ -180,8 +181,8 @@ where
 
     // Snapshot only after the package proved complete, and always before rows
     // start disappearing (FR-011).
-    let snapshot_path = if has_any_rows(conn)? {
-        Some(snapshot(conn, data_dir)?.display().to_string())
+    let snapshot_path = if has_any_rows_for(conn, exported_defs.iter().copied())? {
+        Some(snapshot_with_prefix(conn, data_dir, snapshot_prefix)?.display().to_string())
     } else {
         None
     };
@@ -190,7 +191,7 @@ where
     // previous state intact rather than a half-loaded base (FR-009).
     let tx = conn.transaction()?;
 
-    for def in registry::exported() {
+    for def in &exported_defs {
         tx.execute(&format!("DELETE FROM {}", def.table), [])?;
     }
 
@@ -232,7 +233,7 @@ where
             }
         }
 
-        let entry_loaded = TableLoaded { table: def.table.to_string(), rows: table.len() };
+        let entry_loaded = TableLoaded { table: def.canonical_table().to_string(), rows: table.len() };
         total += table.len();
         on_table(entry_loaded.clone());
         loaded.push(entry_loaded);
@@ -241,9 +242,61 @@ where
     tx.commit()?;
 
     // Only after a successful commit is the archive kept for export (FR-010).
-    std::fs::write(data_dir.join(ORIGINAL_ARCHIVE), current_bytes.as_ref())?;
+    std::fs::write(data_dir.join(original_archive_name), current_bytes.as_ref())?;
 
     Ok(ImportSummary { tables: loaded, total_rows: total, snapshot: snapshot_path })
+}
+
+/// Read the archive and load every canonical table it carries.
+///
+/// For each managed table the source is `{table}_canonical.json` at the root,
+/// falling back to the legacy `parquet/{table}_canonical.parquet`; when both
+/// exist the JSON wins (SEP-032, FR-006). A managed table with neither file
+/// aborts the import before anything destructive happens (FR-014).
+///
+/// `on_table` is called as each table finishes, so the caller can emit progress
+/// without this module knowing anything about Tauri.
+pub fn import_archive<F>(
+    conn: &mut Connection,
+    archive_bytes: &[u8],
+    data_dir: &Path,
+    on_table: F,
+) -> Result<ImportSummary, AppError>
+where
+    F: FnMut(TableLoaded),
+{
+    import_archive_with_defs(
+        conn,
+        archive_bytes,
+        data_dir,
+        registry::ENTITIES,
+        "hub",
+        ORIGINAL_ARCHIVE,
+        on_table,
+    )
+}
+
+/// Import the canonical archive into the isolated Horizon v2 tables (`hv2_*`),
+/// keeping `horizon_v2_original.zip` and `horizon-v2-*` snapshots separate
+/// from Horizon Legacy (SEP-039).
+pub fn import_horizon_v2_archive<F>(
+    conn: &mut Connection,
+    archive_bytes: &[u8],
+    data_dir: &Path,
+    on_table: F,
+) -> Result<ImportSummary, AppError>
+where
+    F: FnMut(TableLoaded),
+{
+    import_archive_with_defs(
+        conn,
+        archive_bytes,
+        data_dir,
+        registry::HORIZON_V2_ENTITIES,
+        "horizon-v2",
+        HORIZON_V2_ORIGINAL_ARCHIVE,
+        on_table,
+    )
 }
 
 pub fn looks_like_zip(path: &Path) -> bool {
@@ -642,12 +695,12 @@ mod tests {
         }
 
         let expected: &[(&str, i64)] = &[
-            ("researchers", 9694), ("students", 6282), ("articles", 2133),
-            ("initiatives", 4044), ("knowledge_areas", 1552),
-            ("professional_activities", 2099), ("research_productions", 975),
-            ("research_groups", 353), ("proficiencies", 220), ("advisorships", 188),
-            ("organizations", 139), ("awards", 52), ("campuses", 23),
-            ("fellowships", 19), ("languages", 8),
+            ("researchers", 18334), ("students", 11717), ("articles", 8079),
+            ("initiatives", 15546), ("knowledge_areas", 1563),
+            ("professional_activities", 9560), ("research_productions", 3732),
+            ("research_groups", 353), ("proficiencies", 794), ("advisorships", 190),
+            ("organizations", 440), ("awards", 183), ("campuses", 23),
+            ("fellowships", 20), ("languages", 11),
         ];
 
         let (mut conn, dir) = fixture();
@@ -663,6 +716,50 @@ mod tests {
 
         assert_eq!(summary.tables.len(), 15, "as 15 tabelas canonicas devem carregar");
         assert_eq!(summary.total_rows, expected.iter().map(|(_, n)| *n as usize).sum::<usize>());
+    }
+
+    /// SEP-039 T013: importing into `horizon_v2` loads `hv2_*` tables, saves
+    /// `horizon_v2_original.zip`, creates `horizon-v2-*` snapshots when prior
+    /// `hv2_*` data exists, and never touches the legacy Horizon tables or `original.zip`.
+    #[test]
+    fn horizon_v2_imports_isolated_from_legacy() {
+        let (mut conn, dir) = fixture();
+        conn.execute("INSERT INTO campuses (id, name) VALUES (1, 'Legado Intacto')", [])
+            .unwrap();
+        std::fs::write(dir.path().join(ORIGINAL_ARCHIVE), b"legacy-zip-bytes").unwrap();
+
+        let zip1 = zip_from(&complete_package(vec![(
+            "campuses_canonical.json",
+            campuses_json(&[(10, "Serra V2"), (20, "Vitoria V2")]),
+        )]));
+        let summary1 = import_horizon_v2_archive(&mut conn, &zip1, dir.path(), |_| {}).unwrap();
+        assert_eq!(summary1.total_rows, 2);
+        assert!(summary1.snapshot.is_none(), "primeira importação hv2 não tinha dados hv2 prévios");
+        assert!(dir.path().join(HORIZON_V2_ORIGINAL_ARCHIVE).exists());
+        assert_eq!(
+            std::fs::read(dir.path().join(ORIGINAL_ARCHIVE)).unwrap(),
+            b"legacy-zip-bytes",
+            "original.zip do Horizon Legacy não pode ser sobrescrito"
+        );
+
+        let hv2_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM hv2_campuses", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(hv2_count, 2);
+
+        let legacy_name: String = conn
+            .query_row("SELECT name FROM campuses WHERE id = 1", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(legacy_name, "Legado Intacto");
+
+        // Second hv2 import must create a `horizon-v2-*` snapshot.
+        let zip2 = zip_from(&complete_package(vec![(
+            "campuses_canonical.json",
+            campuses_json(&[(30, "Alegre V2")]),
+        )]));
+        let summary2 = import_horizon_v2_archive(&mut conn, &zip2, dir.path(), |_| {}).unwrap();
+        let snap = summary2.snapshot.expect("segunda importação hv2 deve gerar snapshot");
+        assert!(snap.contains("horizon-v2-"), "snapshot deve usar prefixo horizon-v2-: {snap}");
     }
 
     /// SC-001 (shape): declared rows land in the right table.

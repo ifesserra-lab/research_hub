@@ -215,7 +215,7 @@ describe('SyncPanel (Upload - US2)', () => {
     });
 
     expect(screen.getByRole('textbox', { name: /repositório/i })).toBeDefined();
-    expect(screen.getByRole('textbox', { name: /branch/i })).toBeDefined();
+    expect(screen.getByRole('textbox', { name: /^branch$/i })).toBeDefined();
     expect(screen.getByRole('textbox', { name: /caminho do arquivo/i })).toBeDefined();
     expect(screen.getByRole('button', { name: /enviar para o github/i })).toBeDefined();
     expect(screen.getByText(/dados pessoais|visibilidade|confidenciais/i)).toBeDefined();
@@ -246,7 +246,7 @@ describe('SyncPanel (Upload - US2)', () => {
     expect(mockApiFetch).not.toHaveBeenCalledWith('/github/config', expect.anything());
   });
 
-  it('uploads successfully when file does not exist in destination', async () => {
+  it('uploads in default "Criar nova branch" mode and adds the created branch to the selector', async () => {
     mockApiFetch
       .mockResolvedValueOnce({
         repo: 'owner/repo',
@@ -256,20 +256,13 @@ describe('SyncPanel (Upload - US2)', () => {
         has_token: true,
         token_hint: 'abcd',
       })
-      // GET /github/check?project=horizon
-      .mockResolvedValueOnce({
-        repo: 'owner/repo',
-        branch: 'main',
-        path: 'exports/exports_canonical.zip',
-        branch_exists: true,
-        file_exists: false,
-        file_sha: null,
-      })
       // POST /github/upload
       .mockResolvedValueOnce({
         commit_sha: '1234567890abcdef',
         html_url: 'https://github.com/owner/repo/commit/1234567890abcdef',
         replaced: false,
+        branch: 'update/horizon-custom',
+        created_branch: true,
       });
 
     render(<SyncPanel project="horizon" allowUpload={true} />);
@@ -278,24 +271,46 @@ describe('SyncPanel (Upload - US2)', () => {
       expect(mockApiFetch).toHaveBeenCalledWith('/github/config?project=horizon');
     });
 
+    const createRadio = screen.getByRole('radio', {
+      name: /criar nova branch com os novos dados/i,
+    });
+    expect(createRadio.checked).toBe(true);
+
+    const newBranchInput = screen.getByRole('textbox', { name: /nome da nova branch/i });
+    expect(newBranchInput.value).toMatch(/^update\/horizon-/);
+    fireEvent.change(newBranchInput, { target: { value: 'update/horizon-custom' } });
+
     fireEvent.click(screen.getByRole('button', { name: /enviar para o github/i }));
 
     await waitFor(() => {
-      expect(mockApiFetch).toHaveBeenCalledWith('/github/check?project=horizon');
       expect(mockApiFetch).toHaveBeenCalledWith('/github/upload', {
         method: 'POST',
-        body: JSON.stringify({ project: 'horizon', confirmOverwrite: false }),
+        body: JSON.stringify({
+          project: 'horizon',
+          confirmOverwrite: false,
+          createNewBranch: true,
+          baseBranch: 'main',
+          newBranch: 'update/horizon-custom',
+          targetBranch: null,
+        }),
       });
     });
 
     await waitFor(() => {
-      expect(screen.getByText(/enviado com sucesso/i)).toBeDefined();
+      expect(screen.getByText(/Nova branch criada: update\/horizon-custom/i)).toBeDefined();
     });
     const link = screen.getByRole('link', { name: /1234567/i });
     expect(link.getAttribute('href')).toBe('https://github.com/owner/repo/commit/1234567890abcdef');
+
+    // A branch base configurada continua sendo 'main' (FR-005), e a nova branch entra no seletor
+    expect(screen.getByRole('textbox', { name: /^branch$/i }).value).toBe('main');
+    const branchSelect = screen.getByRole('combobox', { name: /selecionar branch existente/i });
+    expect(Array.from(branchSelect.options).map((o) => o.value)).toContain(
+      'update/horizon-custom'
+    );
   });
 
-  it('prompts for overwrite confirmation when file exists in destination', async () => {
+  it('loads remote branches beyond main and uploads in "Enviar na branch selecionada" mode with overwrite check', async () => {
     window.confirm = vi.fn().mockReturnValue(true);
 
     mockApiFetch
@@ -307,10 +322,16 @@ describe('SyncPanel (Upload - US2)', () => {
         has_token: true,
         token_hint: 'abcd',
       })
+      // GET /github/branches
+      .mockResolvedValueOnce([
+        { name: 'main', commit_sha: '111' },
+        { name: 'develop', commit_sha: '222' },
+        { name: 'homologacao', commit_sha: '333' },
+      ])
       // GET /github/check
       .mockResolvedValueOnce({
         repo: 'owner/repo',
-        branch: 'main',
+        branch: 'develop',
         path: 'exports/exports_canonical.zip',
         branch_exists: true,
         file_exists: true,
@@ -321,6 +342,8 @@ describe('SyncPanel (Upload - US2)', () => {
         commit_sha: 'new_commit_sha',
         html_url: 'https://github.com/owner/repo/commit/new_commit_sha',
         replaced: true,
+        branch: 'develop',
+        created_branch: false,
       });
 
     render(<SyncPanel project="horizon" allowUpload={true} />);
@@ -328,6 +351,21 @@ describe('SyncPanel (Upload - US2)', () => {
     await waitFor(() => {
       expect(mockApiFetch).toHaveBeenCalledWith('/github/config?project=horizon');
     });
+
+    // Carrega branches remotas além da main (US2)
+    fireEvent.click(screen.getByRole('button', { name: /carregar branches/i }));
+    await waitFor(() => {
+      expect(mockApiFetch).toHaveBeenCalledWith(
+        '/github/branches?project=horizon&repo=owner%2Frepo'
+      );
+    });
+
+    const branchSelect = screen.getByRole('combobox', { name: /selecionar branch existente/i });
+    fireEvent.change(branchSelect, { target: { value: 'develop' } });
+    expect(screen.getByRole('textbox', { name: /^branch$/i }).value).toBe('develop');
+
+    // Alterna para "Enviar na branch selecionada"
+    fireEvent.click(screen.getByRole('radio', { name: /enviar na branch selecionada/i }));
 
     fireEvent.click(screen.getByRole('button', { name: /enviar para o github/i }));
 
@@ -340,12 +378,19 @@ describe('SyncPanel (Upload - US2)', () => {
     await waitFor(() => {
       expect(mockApiFetch).toHaveBeenCalledWith('/github/upload', {
         method: 'POST',
-        body: JSON.stringify({ project: 'horizon', confirmOverwrite: true }),
+        body: JSON.stringify({
+          project: 'horizon',
+          confirmOverwrite: true,
+          createNewBranch: false,
+          baseBranch: 'develop',
+          newBranch: null,
+          targetBranch: 'develop',
+        }),
       });
     });
   });
 
-  it('does not upload if user declines overwrite confirmation', async () => {
+  it('does not upload if user declines overwrite confirmation in existing branch mode', async () => {
     window.confirm = vi.fn().mockReturnValue(false);
 
     mockApiFetch
@@ -373,6 +418,7 @@ describe('SyncPanel (Upload - US2)', () => {
       expect(mockApiFetch).toHaveBeenCalledWith('/github/config?project=horizon');
     });
 
+    fireEvent.click(screen.getByRole('radio', { name: /enviar na branch selecionada/i }));
     fireEvent.click(screen.getByRole('button', { name: /enviar para o github/i }));
 
     await waitFor(() => {
@@ -382,41 +428,90 @@ describe('SyncPanel (Upload - US2)', () => {
     expect(mockApiFetch).not.toHaveBeenCalledWith('/github/upload', expect.anything());
   });
 
-  it('displays conflict or sync_policy error on upload failure', async () => {
-    const error = new Error('O consolidado do SRC contém dados pessoais');
-    error.kind = 'sync_policy';
+  it('enables SRC upload with .json path placeholder and displays conflict error if branch exists (US3)', async () => {
+    const error = new Error("A branch 'update/src-dup' já existe no repositório");
+    error.kind = 'conflict';
 
     mockApiFetch
       .mockResolvedValueOnce({
-        repo: 'owner/repo',
+        repo: 'owner/src-repo',
         branch: 'main',
-        path: 'dados/src.json',
+        path: 'dados/src_consolidado.json',
         last_source_url: null,
         has_token: true,
         token_hint: 'abcd',
-      })
-      .mockResolvedValueOnce({
-        repo: 'owner/repo',
-        branch: 'main',
-        path: 'dados/src.json',
-        branch_exists: true,
-        file_exists: false,
-        file_sha: null,
       })
       .mockRejectedValueOnce(error);
 
     render(<SyncPanel project="src" allowUpload={true} />);
 
     await waitFor(() => {
-      expect(mockApiFetch).toHaveBeenCalled();
+      expect(mockApiFetch).toHaveBeenCalledWith('/github/config?project=src');
     });
+
+    const pathInput = screen.getByRole('textbox', { name: /caminho do arquivo/i });
+    expect(pathInput.getAttribute('placeholder')).toBe('dados/src_consolidado.json');
 
     fireEvent.click(screen.getByRole('button', { name: /enviar para o github/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/dados pessoais/i)).toBeDefined();
+      expect(screen.getByText(/já existe no repositório/i)).toBeDefined();
     });
-    expect(screen.getByText(/sync_policy/i)).toBeDefined();
+    expect(screen.getByText(/conflict/i)).toBeDefined();
+  });
+
+  it('refreshes branches to detect newly created branches on GitHub after sync and updates download URL on selection', async () => {
+    mockApiFetch
+      .mockResolvedValueOnce({
+        repo: 'owner/src-repo',
+        branch: 'main',
+        path: 'dados/src_consolidado.json',
+        last_source_url: 'https://raw.githubusercontent.com/owner/src-repo/main/dados/src_consolidado.json',
+        has_token: true,
+        token_hint: 'abcd',
+      })
+      // Refresh 1: detecta duas novas branches criadas no GitHub
+      .mockResolvedValueOnce([
+        { name: 'main', commit_sha: '1111111aaaa' },
+        { name: 'update/src-20261105-150000', commit_sha: '9999999bbbb' },
+      ]);
+
+    render(<SyncPanel project="src" allowUpload={true} />);
+
+    await waitFor(() => {
+      expect(mockApiFetch).toHaveBeenCalledWith('/github/config?project=src');
+    });
+
+    const refreshBtn = screen.getByRole('button', { name: /atualizar branches/i });
+    fireEvent.click(refreshBtn);
+
+    await waitFor(() => {
+      expect(mockApiFetch).toHaveBeenCalledWith(
+        '/github/branches?project=src&repo=owner%2Fsrc-repo'
+      );
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Novas branches detectadas: update\/src-20261105-150000/i)
+      ).toBeDefined();
+    });
+
+    const detectedBox = screen.getByTestId('newly-detected-branches');
+    expect(detectedBox.textContent).toContain('update/src-20261105-150000 (9999999)');
+
+    // Clicar no chip da branch recém-detectada seleciona a branch e atualiza a URL de download
+    const chipBtn = screen.getByRole('button', {
+      name: /update\/src-20261105-150000 \(9999999\)/i,
+    });
+    fireEvent.click(chipBtn);
+
+    expect(screen.getByRole('textbox', { name: /^branch$/i }).value).toBe(
+      'update/src-20261105-150000'
+    );
+    expect(screen.getByRole('textbox', { name: /url do arquivo/i }).value).toBe(
+      'https://raw.githubusercontent.com/owner/src-repo/update/src-20261105-150000/dados/src_consolidado.json'
+    );
   });
 });
 
@@ -546,7 +641,7 @@ describe('SyncPanel (Egressos - US4)', () => {
 
     const urlInput = screen.getByRole('textbox', { name: /url do arquivo/i });
     const repoInput = screen.getByRole('textbox', { name: /repositório/i });
-    const branchInput = screen.getByRole('textbox', { name: /branch/i });
+    const branchInput = screen.getByRole('textbox', { name: /^branch$/i });
     const pathInput = screen.getByRole('textbox', { name: /caminho/i });
 
     expect(urlInput.value).toBe('');
@@ -576,14 +671,22 @@ describe('SyncPanel (Egressos - US4)', () => {
     expect(await screen.findByText(/21 arquivos json e 1\.142 registros/i)).toBeDefined();
     expect(importedListener).toHaveBeenCalledTimes(1);
 
-    // Trigger upload of the 21 JSON files
+    // Switch to existing branch mode to test overwrite check on Egressos
+    fireEvent.click(screen.getByRole('radio', { name: /enviar na branch selecionada/i }));
     fireEvent.click(screen.getByRole('button', { name: /enviar para o github/i }));
 
     await waitFor(() => {
       expect(mockApiFetch).toHaveBeenCalledWith('/github/check?project=egressos');
       expect(mockApiFetch).toHaveBeenCalledWith('/github/upload', {
         method: 'POST',
-        body: JSON.stringify({ project: 'egressos', confirmOverwrite: true }),
+        body: JSON.stringify({
+          project: 'egressos',
+          confirmOverwrite: true,
+          createNewBranch: false,
+          baseBranch: 'main',
+          newBranch: null,
+          targetBranch: 'main',
+        }),
       });
     });
 

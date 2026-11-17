@@ -82,18 +82,19 @@ fn sanitize<'a>(def: &EntityDef, payload: &'a Record) -> Vec<(&'static str, &'a 
         .collect()
 }
 
-pub fn list(
+fn list_with_def(
     conn: &Connection,
-    route: &str,
+    def: &EntityDef,
     limit: Option<i64>,
     offset: Option<i64>,
     search: Option<&str>,
     sort: Option<&str>,
     order: Option<&str>,
+    filters: Option<&str>,
 ) -> Result<Page, AppError> {
-    let def = registry::by_route(route)?;
     let limit = limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let offset = offset.unwrap_or(0).max(0);
+    let filter_spec = crate::analytics::parse_filter_spec(filters);
 
     // Trimmed before classification (030 research D6); empty after trim means
     // no filter at all, as before.
@@ -146,6 +147,29 @@ pub fn list(
     };
 
     let table = def.table;
+    let cols = def.columns.join(", ");
+
+    if !filter_spec.is_empty() {
+        let sql = format!("SELECT {cols} FROM {table}{where_sql}{order_sql}");
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(bind.iter()), |r| {
+                row_to_record(r, def.columns)
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let filtered: Vec<Record> = rows
+            .into_iter()
+            .filter(|rec| crate::analytics::record_matches_filter_spec(rec, &filter_spec))
+            .collect();
+        let total = filtered.len() as i64;
+        let items = filtered
+            .into_iter()
+            .skip(offset as usize)
+            .take(limit as usize)
+            .collect();
+        return Ok(Page { items, total });
+    }
+
     let total: i64 = if bind.is_empty() {
         conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))?
     } else {
@@ -156,7 +180,6 @@ pub fn list(
         )?
     };
 
-    let cols = def.columns.join(", ");
     let sql = format!("SELECT {cols} FROM {table}{where_sql}{order_sql} LIMIT ? OFFSET ?");
     let mut stmt = conn.prepare(&sql)?;
 
@@ -174,8 +197,7 @@ pub fn list(
     Ok(Page { items, total })
 }
 
-pub fn get(conn: &Connection, route: &str, id: i64) -> Result<Record, AppError> {
-    let def = registry::by_route(route)?;
+fn get_with_def(conn: &Connection, def: &EntityDef, id: i64) -> Result<Record, AppError> {
     let sql = format!(
         "SELECT {} FROM {} WHERE id = ?1",
         def.columns.join(", "),
@@ -188,8 +210,11 @@ pub fn get(conn: &Connection, route: &str, id: i64) -> Result<Record, AppError> 
         })
 }
 
-pub fn create(conn: &Connection, route: &str, payload: &Record) -> Result<Record, AppError> {
-    let def = registry::by_route(route)?;
+fn create_with_def(
+    conn: &Connection,
+    def: &EntityDef,
+    payload: &Record,
+) -> Result<Record, AppError> {
     let fields = sanitize(def, payload);
 
     // An explicit id must survive (parquet import relies on it, FR-011), but an
@@ -216,18 +241,17 @@ pub fn create(conn: &Connection, route: &str, payload: &Record) -> Result<Record
         )?;
     }
 
-    get(conn, route, conn.last_insert_rowid())
+    get_with_def(conn, def, conn.last_insert_rowid())
 }
 
-pub fn update(
+fn update_with_def(
     conn: &Connection,
-    route: &str,
+    def: &EntityDef,
     id: i64,
     payload: &Record,
 ) -> Result<Record, AppError> {
-    let def = registry::by_route(route)?;
     // Confirm existence first so a no-op update still reports not-found.
-    get(conn, route, id)?;
+    get_with_def(conn, def, id)?;
 
     // The path id wins over any id in the body (parity with FastAPI).
     let fields: Vec<_> = sanitize(def, payload)
@@ -254,11 +278,10 @@ pub fn update(
         )?;
     }
 
-    get(conn, route, id)
+    get_with_def(conn, def, id)
 }
 
-pub fn delete(conn: &Connection, route: &str, id: i64) -> Result<(), AppError> {
-    let def = registry::by_route(route)?;
+fn delete_with_def(conn: &Connection, def: &EntityDef, id: i64) -> Result<(), AppError> {
     let affected = conn.execute(
         &format!("DELETE FROM {} WHERE id = ?1", def.table),
         [id],
@@ -267,6 +290,110 @@ pub fn delete(conn: &Connection, route: &str, id: i64) -> Result<(), AppError> {
         return Err(AppError::NotFound);
     }
     Ok(())
+}
+
+pub fn list(
+    conn: &Connection,
+    route: &str,
+    limit: Option<i64>,
+    offset: Option<i64>,
+    search: Option<&str>,
+    sort: Option<&str>,
+    order: Option<&str>,
+) -> Result<Page, AppError> {
+    list_filtered(conn, route, limit, offset, search, sort, order, None)
+}
+
+pub fn list_filtered(
+    conn: &Connection,
+    route: &str,
+    limit: Option<i64>,
+    offset: Option<i64>,
+    search: Option<&str>,
+    sort: Option<&str>,
+    order: Option<&str>,
+    filters: Option<&str>,
+) -> Result<Page, AppError> {
+    let def = registry::by_route(route)?;
+    list_with_def(conn, def, limit, offset, search, sort, order, filters)
+}
+
+pub fn get(conn: &Connection, route: &str, id: i64) -> Result<Record, AppError> {
+    let def = registry::by_route(route)?;
+    get_with_def(conn, def, id)
+}
+
+pub fn create(conn: &Connection, route: &str, payload: &Record) -> Result<Record, AppError> {
+    let def = registry::by_route(route)?;
+    create_with_def(conn, def, payload)
+}
+
+pub fn update(
+    conn: &Connection,
+    route: &str,
+    id: i64,
+    payload: &Record,
+) -> Result<Record, AppError> {
+    let def = registry::by_route(route)?;
+    update_with_def(conn, def, id, payload)
+}
+
+pub fn delete(conn: &Connection, route: &str, id: i64) -> Result<(), AppError> {
+    let def = registry::by_route(route)?;
+    delete_with_def(conn, def, id)
+}
+
+// ------------------------------------------------ Horizon v2 (SEP-039)
+
+pub fn hv2_list(
+    conn: &Connection,
+    route: &str,
+    limit: Option<i64>,
+    offset: Option<i64>,
+    search: Option<&str>,
+    sort: Option<&str>,
+    order: Option<&str>,
+) -> Result<Page, AppError> {
+    hv2_list_filtered(conn, route, limit, offset, search, sort, order, None)
+}
+
+pub fn hv2_list_filtered(
+    conn: &Connection,
+    route: &str,
+    limit: Option<i64>,
+    offset: Option<i64>,
+    search: Option<&str>,
+    sort: Option<&str>,
+    order: Option<&str>,
+    filters: Option<&str>,
+) -> Result<Page, AppError> {
+    let def = registry::by_horizon_v2_route(route)?;
+    list_with_def(conn, def, limit, offset, search, sort, order, filters)
+}
+
+pub fn hv2_get(conn: &Connection, route: &str, id: i64) -> Result<Record, AppError> {
+    let def = registry::by_horizon_v2_route(route)?;
+    get_with_def(conn, def, id)
+}
+
+pub fn hv2_create(conn: &Connection, route: &str, payload: &Record) -> Result<Record, AppError> {
+    let def = registry::by_horizon_v2_route(route)?;
+    create_with_def(conn, def, payload)
+}
+
+pub fn hv2_update(
+    conn: &Connection,
+    route: &str,
+    id: i64,
+    payload: &Record,
+) -> Result<Record, AppError> {
+    let def = registry::by_horizon_v2_route(route)?;
+    update_with_def(conn, def, id, payload)
+}
+
+pub fn hv2_delete(conn: &Connection, route: &str, id: i64) -> Result<(), AppError> {
+    let def = registry::by_horizon_v2_route(route)?;
+    delete_with_def(conn, def, id)
 }
 
 #[cfg(test)]
@@ -639,5 +766,72 @@ mod tests {
         let conn = seeded();
         let r = get(&conn, "campuses", 1).unwrap();
         assert_eq!(r["description"], Json::Null);
+    }
+
+    /// SEP-039 T011: all 15 entities in `HORIZON_V2_ENTITIES` support full CRUD
+    /// via `hv2_*` functions and remain 100% isolated from the legacy tables.
+    #[test]
+    fn horizon_v2_crud_is_isolated_from_legacy_across_all_fifteen_entities() {
+        let conn = db::open_in_memory().unwrap();
+        // Seed a legacy campus to verify it is untouched by hv2 operations.
+        create(&conn, "campuses", &rec(json!({"id": 1, "name": "Serra Legado"}))).unwrap();
+
+        for def in registry::horizon_v2_exported() {
+            let created = hv2_create(&conn, def.route, &rec(json!({})))
+                .unwrap_or_else(|e| panic!("hv2 {}: create falhou: {e}", def.route));
+            let id = created["id"].as_i64().unwrap();
+
+            hv2_get(&conn, def.route, id)
+                .unwrap_or_else(|e| panic!("hv2 {}: get falhou: {e}", def.route));
+            let page = hv2_list(&conn, def.route, None, None, None, None, None)
+                .unwrap_or_else(|e| panic!("hv2 {}: list falhou: {e}", def.route));
+            assert_eq!(page.total, 1);
+
+            let update_col = if def.has_column("campus") { "campus" } else { "name" };
+            hv2_update(&conn, def.route, id, &rec(json!({update_col: "Vitoria V2"})))
+                .unwrap_or_else(|e| panic!("hv2 {}: update falhou: {e}", def.route));
+
+            hv2_delete(&conn, def.route, id)
+                .unwrap_or_else(|e| panic!("hv2 {}: delete falhou: {e}", def.route));
+            assert!(matches!(hv2_get(&conn, def.route, id), Err(AppError::NotFound)));
+        }
+
+        // Legacy campus must still exist untouched.
+        let legacy = get(&conn, "campuses", 1).unwrap();
+        assert_eq!(legacy["name"], json!("Serra Legado"));
+    }
+
+    /// SEP-041 T005: `list_filtered` and `hv2_list_filtered` apply `FilterSpec` (`AND` / `OR`)
+    /// on both scalar and structured JSON columns and update `total`.
+    #[test]
+    fn list_filtered_applies_and_or_rules_across_horizon_and_legacy() {
+        let conn = db::open_in_memory().unwrap();
+        hv2_create(
+            &conn,
+            "initiatives",
+            &rec(json!({"id": 1, "name": "IA Serra", "status": "Active", "campus": "[{\"id\":1,\"name\":\"Serra\"}]"})),
+        )
+        .unwrap();
+        hv2_create(
+            &conn,
+            "initiatives",
+            &rec(json!({"id": 2, "name": "Robótica Serra", "status": "Concluded", "campus": "[{\"id\":1,\"name\":\"Serra\"}]"})),
+        )
+        .unwrap();
+        hv2_create(
+            &conn,
+            "initiatives",
+            &rec(json!({"id": 3, "name": "Química Vitória", "status": "Active", "campus": "[{\"id\":2,\"name\":\"Vitória\"}]"})),
+        )
+        .unwrap();
+
+        let and_json = r#"{"logic":"and","rules":[{"field":"status","operator":"equals","value":"Active"},{"field":"campus","operator":"contains","value":"Serra"}]}"#;
+        let p_and = hv2_list_filtered(&conn, "initiatives", None, None, None, None, None, Some(and_json)).unwrap();
+        assert_eq!(p_and.total, 1);
+        assert_eq!(p_and.items[0]["name"], json!("IA Serra"));
+
+        let or_json = r#"{"logic":"or","rules":[{"field":"status","operator":"equals","value":"Concluded"},{"field":"campus","operator":"contains","value":"Vitória"}]}"#;
+        let p_or = hv2_list_filtered(&conn, "initiatives", None, None, None, None, None, Some(or_json)).unwrap();
+        assert_eq!(p_or.total, 2);
     }
 }
